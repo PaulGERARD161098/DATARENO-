@@ -27,10 +27,12 @@ jamais été poussé dans ce dépôt).
 - Réassurance + Calendly + opt-out = placeholders `.env` (décennale & nb chantiers **à fournir**).
 - **Acceptation** : les 9 variantes passent ; un message piégé est bloqué en test. CLI `python -m src.templates`.
 
-## ⬜ Phase 4 — Génération des brouillons
-- Produire les drafts (Gmail si Workspace, sinon export mailmerge CSV pour l'ESP du domaine dédié).
-- **Jamais d'auto-envoi.** Statut `draft` en base ; envoi = action humaine.
-- **Acceptation** : N drafts générés, marqués `draft`, aucun envoi déclenché par le code.
+## ✅ Phase 4 — Génération des brouillons  *(LIVRÉ)*
+- `src/drafts.py`, `tests/test_drafts.py`. Un brouillon par contact (J0 par défaut), statut `draft`.
+- **Aucun envoi déclenché par le code** (pas de réseau ici) ; idempotent sur (contact, position).
+- Filet de sécurité : chaque draft repasse le linter avant insertion (jamais de message non conforme stocké).
+- Export ESP : `python -m src.drafts export out/drafts_J0.csv`. CLI generate/export.
+- **Acceptation** : 5 200 drafts générés/marqués `draft`, 0 event, 0 message envoyé.
 
 ## ⬜ Phase 5 — Séquençage & warm-up
 - Planifier J0/J+4/J+8 par contact. Respect du warm-up (30→50→100/j). Conditions d'arrêt.
