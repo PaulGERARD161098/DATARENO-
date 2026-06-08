@@ -20,6 +20,13 @@ ALL_SEGMENTS = (
     SEGMENT_EXCLU,
 )
 
+# Segments réellement adressables par email (EXCLU n'est pas démarché).
+ACTIVABLE_SEGMENTS = (
+    SEGMENT_AIR_EAU,
+    SEGMENT_AIR_AIR,
+    SEGMENT_AIR_EAU_A_QUALIFIER,
+)
+
 # Mapping chauffage normalisé -> segment.
 # GAZ/FIOUL -> air/eau · ÉLEC -> air/air · BOIS -> air/eau à qualifier.
 CHAUFFAGE_TO_SEGMENT = {

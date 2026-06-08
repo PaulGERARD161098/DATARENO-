@@ -13,10 +13,11 @@ jamais été poussé dans ce dépôt).
   produit `out/segments/*.csv`, `out/_isoles_qualite.csv`, `out/synthese.xlsx`.
 - **Action immédiate (humain)** : déposer le vrai CSV dans `data/`, lancer, vérifier les comptes réels.
 
-## ⬜ Phase 2 — État & schéma SQLite
-- Table `contacts` (depuis segments), `messages` (séquence), `events` (envoi/ouverture/réponse).
-- Import idempotent depuis les CSV de segments. Dédup sur email.
-- **Acceptation** : ré-import sans doublon ; requête « contacts par segment » OK.
+## ✅ Phase 2 — État & schéma SQLite  *(LIVRÉ)*
+- `src/db.py`, `tests/test_db.py`. Tables `contacts` / `messages` / `events` (FK + CASCADE).
+- Import idempotent depuis les CSV de segments. Dédup sur email (UNIQUE). EXCLU exclu par défaut (`--all` pour l'inclure).
+- **Acceptation** : ré-import sans doublon (5 200 → 0 inséré / 5 200 mis à jour) ; `stats` = contacts par segment OK.
+- CLI : `python -m src.db init|import out/segments|stats [--db state.sqlite]`.
 
 ## ⬜ Phase 3 — Moteur de templates (mails)
 - 9–12 variantes (segment × {J0, J+4, J+8}). Variables : `chauffage`, `dept`, `prenom` (fallback).
