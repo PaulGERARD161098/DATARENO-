@@ -34,9 +34,13 @@ jamais été poussé dans ce dépôt).
 - Export ESP : `python -m src.drafts export out/drafts_J0.csv`. CLI generate/export.
 - **Acceptation** : 5 200 drafts générés/marqués `draft`, 0 event, 0 message envoyé.
 
-## ⬜ Phase 5 — Séquençage & warm-up
-- Planifier J0/J+4/J+8 par contact. Respect du warm-up (30→50→100/j). Conditions d'arrêt.
-- **Acceptation** : simulation 7 jours respectant le plafond quotidien et les arrêts.
+## ✅ Phase 5 — Séquençage & warm-up  *(LIVRÉ)*
+- `src/sequence.py`, `tests/test_sequence.py`. Planifie J0/J+4/J+8 (réserve les 3 créneaux),
+  warm-up 30→50→100/j sur le **total** envois/jour, arrêts (reply/click/optout/bounce) exclus.
+- Pose `scheduled_at` + statut `scheduled` ; **aucun envoi**. Idempotent et borné (horizon max).
+- **Acceptation** : simulation respecte le plafond (30/50/100…) et les arrêts.
+- Réel : 5 200 contacts → 15 600 messages programmés, pic 100/j, horizon 157 j, 0 envoi.
+- CLI : `python -m src.sequence plan|simulate [--start] [--days]`.
 
 ## ⬜ Phase 6 — Traitement des réponses
 - Classer {Intéressé|RDV|Recontacter|PasIntéressé|STOP|Bounce} : IA propose → humain valide.
