@@ -73,6 +73,11 @@ OUTPUT_FIELDS = [
     "campagne", "date_contact", "froid_plus", "exclusion_reason",
 ]
 
+# Colonnes de la liste « à rappeler » (contacts sans email exploitable mais avec téléphone).
+PHONE_FIELDS = [
+    "nom", "tel", "cp", "dept", "chauffage", "surface", "campagne", "date_contact", "raison",
+]
+
 
 def normalize_header(name: str) -> str:
     key = C.strip_accents(name or "").lower().strip()
@@ -268,10 +273,15 @@ def run(csv_path: Path, outdir: Path, today: date | None = None) -> TriResult:
         froids[segment] = sum(1 for c in contacts if c.froid_plus)
         _write_segment_csv(segments_dir / f"{segment}.csv", contacts)
 
+    # Liste « à rappeler » : pas d'email exploitable mais un téléphone présent.
+    # (Export informatif — l'outil n'automatise aucun appel ; voir garde-fous CLAUDE.md.)
+    phone_only = _collect_phone_only(buckets[C.SEGMENT_EXCLU], invalids)
+
     _write_invalids_csv(outdir / "_isoles_qualite.csv", invalids, raw_fields)
     _write_segment_csv(outdir / "_doublons_email.csv", duplicates)
+    _write_phone_csv(outdir / "_a_rappeler_telephone.csv", phone_only)
     _write_synthese_xlsx(
-        outdir / "synthese.xlsx", counts, froids, len(invalids), len(duplicates)
+        outdir / "synthese.xlsx", counts, froids, len(invalids), len(duplicates), len(phone_only)
     )
 
     logger.info(
@@ -282,6 +292,7 @@ def run(csv_path: Path, outdir: Path, today: date | None = None) -> TriResult:
             "froid_plus": froids,
             "isoles": len(invalids),
             "doublons": len(duplicates),
+            "a_rappeler": len(phone_only),
         }},
     )
 
@@ -291,7 +302,45 @@ def run(csv_path: Path, outdir: Path, today: date | None = None) -> TriResult:
         froid_plus_by_segment=froids,
         invalid_count=len(invalids),
         duplicate_count=len(duplicates),
+        phone_only_count=len(phone_only),
     )
+
+
+def _collect_phone_only(
+    exclus: list[Contact], invalids: list[InvalidRow]
+) -> list[dict[str, str]]:
+    """Contacts joignables par téléphone mais non emailables (tel seul + email invalide)."""
+    out: list[dict[str, str]] = []
+    for c in exclus:
+        if c.exclusion_reason == C.REASON_TEL_SEUL and c.tel:
+            out.append({
+                "nom": c.nom or "", "tel": c.tel, "cp": c.cp or "", "dept": c.dept or "",
+                "chauffage": c.chauffage or "", "surface": "" if c.surface is None else c.surface,
+                "campagne": c.campagne or "",
+                "date_contact": c.date_contact.isoformat() if c.date_contact else "",
+                "raison": c.exclusion_reason or "",
+            })
+    for inv in invalids:
+        s = {k: (v.strip() if isinstance(v, str) else "") for k, v in inv.raw.items()}
+        tel = s.get("tel", "")
+        if not tel:
+            continue
+        cp = s.get("cp", "")
+        out.append({
+            "nom": s.get("nom", ""), "tel": tel, "cp": cp,
+            "dept": s.get("dept", "") or (cp[:2] if len(cp) >= 2 else ""),
+            "chauffage": s.get("chauffage", ""), "surface": s.get("surface", ""),
+            "campagne": s.get("campagne", ""), "date_contact": s.get("date", ""),
+            "raison": inv.reason,
+        })
+    return out
+
+
+def _write_phone_csv(path: Path, rows: list[dict[str, str]]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=PHONE_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def _write_segment_csv(path: Path, contacts: list[Contact]) -> None:
@@ -323,6 +372,7 @@ def _write_synthese_xlsx(
     froids: dict[str, int],
     invalid_count: int,
     duplicate_count: int,
+    phone_only_count: int,
 ) -> None:
     from openpyxl import Workbook
 
@@ -334,6 +384,7 @@ def _write_synthese_xlsx(
         ws.append([segment, counts.get(segment, 0), froids.get(segment, 0)])
     ws.append(["ISOLES_QUALITE", invalid_count, 0])
     ws.append(["DOUBLONS_EMAIL", duplicate_count, 0])
+    ws.append(["A_RAPPELER_TEL", phone_only_count, 0])
     wb.save(path)
 
 

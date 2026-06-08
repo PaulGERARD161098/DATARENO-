@@ -19,11 +19,13 @@ jamais été poussé dans ce dépôt).
 - **Acceptation** : ré-import sans doublon (5 200 → 0 inséré / 5 200 mis à jour) ; `stats` = contacts par segment OK.
 - CLI : `python -m src.db init|import out/segments|stats [--db state.sqlite]`.
 
-## ⬜ Phase 3 — Moteur de templates (mails)
-- 9–12 variantes (segment × {J0, J+4, J+8}). Variables : `chauffage`, `dept`, `prenom` (fallback).
-- **Garde-fous (bloquants au build)** : linter de claims → rejeter tout « 1€ », « X% », « X € »
-  non whitelisté, « installation 48h ». 1 seul CTA = Calendly. Opt-out présent. Ton vous.
-- **Acceptation** : rendu des 12 variantes ; le linter bloque un message non conforme en test.
+## ✅ Phase 3 — Moteur de templates (mails)  *(LIVRÉ)*
+- `src/templates.py`, `tests/test_templates.py`. 9 variantes (3 segments × {J0,J+4,J+8}),
+  ton réactivation (base 100 % froid+), variables `dept`/`prenom` (fallback).
+- **Linter de claims** (bloquant) : « 1€ », « X% », montants « X € », « installation 48h ».
+  Règles structurelles : opt-out présent + 1 seul CTA Calendly. TEST POV adversaire inclus.
+- Réassurance + Calendly + opt-out = placeholders `.env` (décennale & nb chantiers **à fournir**).
+- **Acceptation** : les 9 variantes passent ; un message piégé est bloqué en test. CLI `python -m src.templates`.
 
 ## ⬜ Phase 4 — Génération des brouillons
 - Produire les drafts (Gmail si Workspace, sinon export mailmerge CSV pour l'ESP du domaine dédié).

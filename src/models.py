@@ -48,3 +48,4 @@ class TriResult(BaseModel):
     froid_plus_by_segment: dict[str, int] = {}
     invalid_count: int = 0
     duplicate_count: int = 0
+    phone_only_count: int = 0
