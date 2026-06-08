@@ -6,11 +6,12 @@ jamais été poussé dans ce dépôt).
 
 ---
 
-## ⬜ Phase 1 — TRI par chauffage
-- `src/tri.py`, `src/models.py`, `src/config.py`, `src/logging_setup.py`, `tests/test_tri.py`.
-- **Acceptation** : `python -m pytest -q` vert. `python -m src.tri data/base.csv` produit
-  `out/segments/*.csv`, `out/_isoles_qualite.csv`, `out/synthese.xlsx`.
-- **Action immédiate** : déposer le vrai CSV dans `data/`, lancer, vérifier les comptes réels.
+## ✅ Phase 1 — TRI par chauffage  *(LIVRÉ)*
+- `src/tri.py`, `src/models.py`, `src/config.py`, `src/logging_setup.py`,
+  `tests/test_tri.py`, `tests/test_logging_setup.py`.
+- **Acceptation** : `python -m pytest -q` → 32 passed. `python -m src.tri data/base.csv`
+  produit `out/segments/*.csv`, `out/_isoles_qualite.csv`, `out/synthese.xlsx`.
+- **Action immédiate (humain)** : déposer le vrai CSV dans `data/`, lancer, vérifier les comptes réels.
 
 ## ⬜ Phase 2 — État & schéma SQLite
 - Table `contacts` (depuis segments), `messages` (séquence), `events` (envoi/ouverture/réponse).
