@@ -23,7 +23,6 @@ import os
 import sqlite3
 from collections import defaultdict
 from datetime import date, timedelta
-from pathlib import Path
 
 from . import config as C
 from . import db as _db
@@ -94,6 +93,7 @@ def plan_sequence(
         f"""
         SELECT id FROM contacts
         WHERE segment IN ({placeholders})
+          AND email NOT IN (SELECT email FROM suppressions)
         ORDER BY (surface IS NULL), surface ASC, id ASC
         """,
         segments,

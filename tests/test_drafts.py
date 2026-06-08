@@ -4,7 +4,6 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from src import config as C
 from src import db
 from src import drafts
 from src.templates import MessageContext

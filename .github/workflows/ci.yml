@@ -14,6 +14,10 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install ruff
+      - name: Lint (ruff)
+        run: ruff check src tests
       - name: Run tests
         run: python -m pytest -q

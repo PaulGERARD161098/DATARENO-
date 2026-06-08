@@ -4,12 +4,10 @@ from __future__ import annotations
 from datetime import date, timedelta
 from pathlib import Path
 
-import pytest
 
 from src import config as C
 from src import db
 from src import sequence
-from src.templates import MessageContext
 
 
 TODAY = date(2026, 1, 1)

@@ -42,17 +42,26 @@ jamais été poussé dans ce dépôt).
 - Réel : 5 200 contacts → 15 600 messages programmés, pic 100/j, horizon 157 j, 0 envoi.
 - CLI : `python -m src.sequence plan|simulate [--start] [--days]`.
 
-## ⬜ Phase 6 — Traitement des réponses
-- Classer {Intéressé|RDV|Recontacter|PasIntéressé|STOP|Bounce} : IA propose → humain valide.
-- Actions auto par classe (STOP→blacklist immédiate, Bounce→purge, Intéressé→lien Calendly).
-- **Acceptation** : jeu de réponses test correctement pré-classé ; STOP blackliste sans envoi futur.
+## ✅ Phase 6 — Traitement des réponses  *(LIVRÉ)*
+- `src/replies.py` + table `suppressions`. Heuristique propose une classe, **l'humain valide**
+  (aucun effet de bord sans `validated_label`). Actions : STOP/Bounce→suppression+annulation,
+  Intéressé→Calendly, RDV→rdv, Recontacter→file +90 j, PasIntéressé→clôture. Logs sans PII.
+- **Acceptation** : jeu de réponses test pré-classé ; STOP blackliste + annule les touches.
 
-## ⬜ Phase 7 — Reporting & A/B
-- KPIs jusqu'au RDV (délivré→ouvert→répondu→RDV). A/B sur objet. Sortie = reco (humain décide).
-- **Acceptation** : rapport lisible + reco de variant gagnant, sans bascule auto.
+## ✅ Phase 7 — Reporting & A/B  *(LIVRÉ)*
+- `src/report.py`. Funnel programmé→envoyé→ouvert→répondu→RDV + taux. A/B par objet,
+  reco du gagnant (l'humain décide, pas de bascule auto). CLI `python -m src.report`.
+- **Acceptation** : rapport lisible + recommandation.
 
-## ⬜ Phase 8 — Dashboard HTML local *(optionnel)*
-- Vue état pipeline + file de validation des drafts/réponses. Local, lecture SQLite.
+## ✅ Phase 8 — Connecteur d'envoi (opérationnel)  *(LIVRÉ)*
+- `src/sender.py`. **Dry-run par défaut** ; envoi réel = `confirm=True` + transport explicite
+  (export `.eml` ou SMTP). Respecte suppression + plafond du jour ; event `sent` + statut `sent`.
+  Ingestion `ingest_event` (open/reply/bounce/optout → arrêts auto). CLI `send`/`ingest`.
+- **Acceptation** : dry-run = 0 envoi ; envoi réel + event `sent` ; bounce → suppression.
+
+## ✅ Phase 9 — Dashboard HTML local  *(LIVRÉ, optionnel)*
+- `src/dashboard.py`. HTML statique (funnel, segments, statuts, file de validation), lecture SQLite.
+- CLI : `python -m src.dashboard out/dashboard.html`.
 
 ---
 

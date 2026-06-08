@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS contacts (
     segment      TEXT NOT NULL,
     froid_plus   INTEGER NOT NULL DEFAULT 0,
     status       TEXT NOT NULL DEFAULT 'new',
+    recontact_at TEXT,
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
 );
@@ -72,6 +73,12 @@ CREATE TABLE IF NOT EXISTS events (
     created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_contact ON events(contact_id);
+
+CREATE TABLE IF NOT EXISTS suppressions (
+    email      TEXT PRIMARY KEY,
+    reason     TEXT NOT NULL,                          -- stop / bounce / optout
+    created_at TEXT NOT NULL
+);
 """
 
 
