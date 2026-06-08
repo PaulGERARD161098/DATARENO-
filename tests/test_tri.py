@@ -78,12 +78,32 @@ def test_ligne_vide_isolee():
 
 
 # --- parsing --------------------------------------------------------------
-@pytest.mark.parametrize("raw,expected", [("120", 120.0), ("90,5", 90.5), ("1 200 m2", 1200.0), ("", None), ("abc", None)])
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("120", 120.0),
+        ("90,5", 90.5),
+        ("1 200 m2", 1200.0),
+        ("110-160 m2", 110.0),      # fourchette -> borne basse
+        ("50 - 110 m2", 50.0),
+        ("160 - 900 m2", 160.0),
+        ("", None),
+        ("abc", None),
+    ],
+)
 def test_parse_surface(raw, expected):
     assert parse_surface(raw) == expected
 
 
-@pytest.mark.parametrize("raw,expected", [("2025-01-15", date(2025, 1, 15)), ("15/01/2025", date(2025, 1, 15)), ("xx", None)])
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("2025-01-15", date(2025, 1, 15)),
+        ("15/01/2025", date(2025, 1, 15)),
+        ("2023-09-07T10:28:00", date(2023, 9, 7)),  # ISO Excel avec heure
+        ("xx", None),
+    ],
+)
 def test_parse_date(raw, expected):
     assert parse_date(raw) == expected
 
@@ -162,3 +182,40 @@ def test_separateur_point_virgule(tmp_path: Path):
     src.write_text("Email;Chauffage;Surface\na@b.fr;GAZ;100\n", encoding="utf-8")
     result = run(src, tmp_path / "out", today=TODAY)
     assert result.counts_by_segment[C.SEGMENT_AIR_EAU] == 1
+
+
+def test_dedup_email(tmp_path: Path):
+    fields = ["Email", "Chauffage", "Surface"]
+    rows = [
+        {"Email": "dup@b.fr", "Chauffage": "GAZ", "Surface": "100"},
+        {"Email": "DUP@b.fr", "Chauffage": "GAZ", "Surface": "120"},  # même email (casse)
+        {"Email": "uniq@b.fr", "Chauffage": "GAZ", "Surface": "80"},
+    ]
+    src = tmp_path / "base.csv"
+    _write_csv(src, rows, fields)
+    result = run(src, tmp_path / "out", today=TODAY)
+    assert result.counts_by_segment[C.SEGMENT_AIR_EAU] == 2
+    assert result.duplicate_count == 1
+    assert (tmp_path / "out" / "_doublons_email.csv").exists()
+
+
+def test_lecture_xlsx_colonnes_reelles(tmp_path: Path):
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append([
+        "Quel est votre mode de chauffage actuel?",
+        "Quelle est la surface de votre maison ?",
+        "nom", "cp", "tel", "cpn", "eml", "Submitted At",
+    ])
+    ws.append(["FIOUL", "110-160 m2", "Dupont", "69003", "33600000000", "SMU5", "d@b.fr", "2023-09-07"])
+    ws.append(["ÉLECTRICITÉ", "50 - 110 m2", "Martin", "75010", "33700000000", "SMU5", "m@b.fr", "2023-09-07"])
+    ws.append(["GAZ", "110-160 m2", "SansMail", "13001", "33800000000", "SMU5", "", "2023-09-07"])
+    src = tmp_path / "base.xlsx"
+    wb.save(src)
+
+    result = run(src, tmp_path / "out", today=TODAY)
+    assert result.counts_by_segment[C.SEGMENT_AIR_EAU] == 1   # FIOUL avec email
+    assert result.counts_by_segment[C.SEGMENT_AIR_AIR] == 1   # ÉLEC avec email
+    assert result.counts_by_segment[C.SEGMENT_EXCLU] == 1     # GAZ sans email -> tel seul

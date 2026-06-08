@@ -53,10 +53,18 @@ HEADER_MAP = {
     "m2": "surface",
     "campagne": "campagne",
     "source": "campagne",
+    "cpn": "campagne",
     "date": "date",
     "date contact": "date",
     "date_contact": "date",
     "derniere date": "date",
+    "submitted at": "date",
+    # Intitulés réels de la base acquise (formulaire de collecte).
+    "quel est votre mode de chauffage actuel?": "chauffage",
+    "quel est votre mode de chauffage actuel": "chauffage",
+    "quelle est la surface de votre maison ?": "surface",
+    "quelle est la surface de votre maison": "surface",
+    "eml": "email",
 }
 
 # Colonnes des fichiers de segment en sortie.
@@ -68,16 +76,22 @@ OUTPUT_FIELDS = [
 
 def normalize_header(name: str) -> str:
     key = C.strip_accents(name or "").lower().strip()
+    key = " ".join(key.split())  # compacte les espaces multiples
     return HEADER_MAP.get(key, key)
 
 
 def parse_surface(raw: str) -> float | None:
+    """Surface en m². Gère un nombre (« 120 m2 ») comme une fourchette
+    (« 110-160 m2 », « 50 - 110 m2 ») : dans ce cas on retient la borne basse,
+    ce qui préserve le tri par priorité « surface ↑ »."""
     if not raw:
         return None
-    # Retire les unités courantes avant d'extraire le nombre (ex. « 120 m2 »).
-    without_unit = re.sub(r"m[²2]", "", raw, flags=re.IGNORECASE)
-    cleaned = re.sub(r"[^0-9,.\-]", "", without_unit).replace(",", ".")
-    if not cleaned or cleaned in {"-", ".", "-."}:
+    without_unit = re.sub(r"m[²2]", "", str(raw), flags=re.IGNORECASE)
+    # Fourchette « a - b » -> borne basse a.
+    range_match = re.match(r"\s*([0-9][0-9\s.,]*?)\s*[-–]\s*[0-9]", without_unit)
+    token = range_match.group(1) if range_match else without_unit
+    cleaned = re.sub(r"[^0-9,.]", "", token).replace(",", ".")
+    if not cleaned or cleaned == ".":
         return None
     try:
         return float(cleaned)
@@ -89,6 +103,10 @@ def parse_date(raw: str) -> date | None:
     if not raw:
         return None
     text = raw.strip()
+    try:  # gère l'ISO avec heure (« 2023-09-07T10:28:00 ») et sans.
+        return datetime.fromisoformat(text).date()
+    except ValueError:
+        pass
     for fmt in C.DATE_FORMATS:
         try:
             return datetime.strptime(text, fmt).date()
@@ -151,7 +169,14 @@ def classify_row(raw: dict[str, str], line: int, today: date) -> Contact | Inval
     )
 
 
-def _read_rows(csv_path: Path) -> tuple[list[str], list[dict[str, str]]]:
+def _read_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    """Lit le fichier d'entrée (CSV ou XLSX) et normalise les en-têtes."""
+    if path.suffix.lower() in {".xlsx", ".xlsm"}:
+        return _read_xlsx(path)
+    return _read_csv(path)
+
+
+def _read_csv(csv_path: Path) -> tuple[list[str], list[dict[str, str]]]:
     """Lit le CSV (sniff du séparateur, fallback utf-8 → latin-1)."""
     for encoding in ("utf-8-sig", "latin-1"):
         try:
@@ -175,6 +200,34 @@ def _read_rows(csv_path: Path) -> tuple[list[str], list[dict[str, str]]]:
     raise ValueError("Impossible de décoder le CSV (utf-8/latin-1).")
 
 
+def _read_xlsx(path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    """Lit la 1ʳᵉ feuille d'un classeur Excel (en-tête = 1ʳᵉ ligne)."""
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path, read_only=True, data_only=True)
+    ws = wb.worksheets[0]
+    rows_iter = ws.iter_rows(values_only=True)
+    try:
+        header = next(rows_iter)
+    except StopIteration:
+        return [], []
+
+    # Indices des colonnes nommées (on ignore les colonnes sans en-tête).
+    cols = [(i, normalize_header(str(h))) for i, h in enumerate(header) if h not in (None, "")]
+    normalized = [name for _, name in cols]
+
+    def _cell(value: object) -> str:
+        if value is None:
+            return ""
+        if hasattr(value, "isoformat"):  # date / datetime
+            return value.isoformat()
+        return str(value)
+
+    rows = [{name: _cell(raw[i]) for i, name in cols} for raw in rows_iter]
+    wb.close()
+    return normalized, rows
+
+
 def _sort_key(contact: Contact) -> tuple[bool, float]:
     # Priorité surface ↑ ; surfaces inconnues en fin de liste.
     return (contact.surface is None, contact.surface or 0.0)
@@ -187,13 +240,22 @@ def run(csv_path: Path, outdir: Path, today: date | None = None) -> TriResult:
 
     buckets: dict[str, list[Contact]] = {s: [] for s in C.ALL_SEGMENTS}
     invalids: list[InvalidRow] = []
+    duplicates: list[Contact] = []
+    seen_emails: set[str] = set()
 
     for idx, row in enumerate(rows, start=2):  # ligne 1 = en-tête
         result = classify_row(row, idx, today)
         if isinstance(result, InvalidRow):
             invalids.append(result)
-        else:
-            buckets[result.segment].append(result)
+            continue
+        # Dédup sur email (1ʳᵉ occurrence conservée ; les suivantes isolées).
+        if result.email:
+            key = result.email.lower()
+            if key in seen_emails:
+                duplicates.append(result)
+                continue
+            seen_emails.add(key)
+        buckets[result.segment].append(result)
 
     segments_dir = outdir / "segments"
     segments_dir.mkdir(parents=True, exist_ok=True)
@@ -207,7 +269,10 @@ def run(csv_path: Path, outdir: Path, today: date | None = None) -> TriResult:
         _write_segment_csv(segments_dir / f"{segment}.csv", contacts)
 
     _write_invalids_csv(outdir / "_isoles_qualite.csv", invalids, raw_fields)
-    _write_synthese_xlsx(outdir / "synthese.xlsx", counts, froids, len(invalids))
+    _write_segment_csv(outdir / "_doublons_email.csv", duplicates)
+    _write_synthese_xlsx(
+        outdir / "synthese.xlsx", counts, froids, len(invalids), len(duplicates)
+    )
 
     logger.info(
         "tri terminé",
@@ -216,6 +281,7 @@ def run(csv_path: Path, outdir: Path, today: date | None = None) -> TriResult:
             "counts": counts,
             "froid_plus": froids,
             "isoles": len(invalids),
+            "doublons": len(duplicates),
         }},
     )
 
@@ -224,6 +290,7 @@ def run(csv_path: Path, outdir: Path, today: date | None = None) -> TriResult:
         counts_by_segment=counts,
         froid_plus_by_segment=froids,
         invalid_count=len(invalids),
+        duplicate_count=len(duplicates),
     )
 
 
@@ -251,7 +318,11 @@ def _write_invalids_csv(
 
 
 def _write_synthese_xlsx(
-    path: Path, counts: dict[str, int], froids: dict[str, int], invalid_count: int
+    path: Path,
+    counts: dict[str, int],
+    froids: dict[str, int],
+    invalid_count: int,
+    duplicate_count: int,
 ) -> None:
     from openpyxl import Workbook
 
@@ -262,20 +333,21 @@ def _write_synthese_xlsx(
     for segment in C.ALL_SEGMENTS:
         ws.append([segment, counts.get(segment, 0), froids.get(segment, 0)])
     ws.append(["ISOLES_QUALITE", invalid_count, 0])
+    ws.append(["DOUBLONS_EMAIL", duplicate_count, 0])
     wb.save(path)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Tri de la base réno par chauffage.")
-    parser.add_argument("csv", help="CSV d'entrée (base de contacts).")
+    parser.add_argument("source", help="Fichier d'entrée (.csv ou .xlsx).")
     parser.add_argument("--outdir", default="out", help="Dossier de sortie (défaut: out).")
     args = parser.parse_args(argv)
 
-    result = run(Path(args.csv), Path(args.outdir))
+    result = run(Path(args.source), Path(args.outdir))
     print(  # noqa: T201 — sortie CLI volontaire
         f"Tri OK — {result.total_rows} lignes · "
         + " · ".join(f"{s}={result.counts_by_segment.get(s, 0)}" for s in C.ALL_SEGMENTS)
-        + f" · isolés={result.invalid_count}"
+        + f" · isolés={result.invalid_count} · doublons={result.duplicate_count}"
     )
     return 0
 

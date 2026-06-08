@@ -47,3 +47,4 @@ class TriResult(BaseModel):
     counts_by_segment: dict[str, int] = {}
     froid_plus_by_segment: dict[str, int] = {}
     invalid_count: int = 0
+    duplicate_count: int = 0
