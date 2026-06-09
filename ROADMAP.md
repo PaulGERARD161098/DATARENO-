@@ -58,10 +58,24 @@ Vue état pipeline + file de validation drafts/réponses (lecture SQLite).
    Landmines code désamorcés (A1 warm-up auto, B1 garde-fou placeholders, A3 suppression
    à l'export, A4 coupe-circuit bounce) ; reste B2/A5 (ops) + B4 ingestion auto.
 
+## ✅ Acquis opérationnels (post-pré-mortem)
+- **Envoi réel** : transport **SMTP** du domaine dédié (`src.sender --smtp`), MIME avec
+  `List-Unsubscribe` 1-clic, derrière les garde-fous (warm-up auto, refus placeholders,
+  suppression, coupe-circuit bounce).
+- **Ingestion** : poll **IMAP** autonome (`src.inbox poll`) — bounce→purge, réponse→arrêt
+  séquence + classe proposée (humain valide).
+- **Run quotidien** : `src.daily run` = ingérer les retours **puis** envoyer le dû (un appel).
+- **Recontact 3 mois** : `src.recontact requeue [--and-plan]` réarme les contacts échus
+  (marqueur `requeue` qui neutralise l'arrêt antérieur).
+- **A/B objet** : 2 variantes par position, bras stable par contact ; `src.report` compare.
+- Reste opérationnel : **B2** (base légale opt-in, showstopper), **A5** (SPF/DKIM/DMARC),
+  remplir `.env` (SMTP/IMAP + liens + réassurance), automatiser le cron du run quotidien.
+
 ## 🔑 Variables `.env` attendues
 `CALENDLY_URL`, `OPTOUT_URL`, `SENDER_NAME`, `SENDING_DOMAIN`, `DRAFT_MODE`,
 `REASSURANCE_RGE`, `REASSURANCE_DECENNALE`, `REASSURANCE_NB_CHANTIERS`,
-`WARMUP_J1/J2/MAX`, `DB_PATH`, (+ secrets ESP/IMAP au moment du branchement).
+`WARMUP_J1/J2/MAX`, `BOUNCE_RATE_LIMIT`, `DB_PATH`,
+`SMTP_*` / `SENDER_EMAIL` / `UNSUBSCRIBE_MAILTO`, `IMAP_*` (au moment du branchement).
 
 ## 📍 Définition de « opérationnel »
 L'outil est opérationnel quand, chaque jour, un humain peut :

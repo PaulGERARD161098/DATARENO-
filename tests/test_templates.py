@@ -9,11 +9,15 @@ import pytest
 
 from src import config as C
 from src.templates import (
+    AB_LABELS,
     POSITIONS,
+    SUBJECT_VARIANTS,
     MessageContext,
+    assign_ab,
     lint_claims,
     render,
     render_all,
+    subject_for,
     validate_message,
 )
 
@@ -91,6 +95,47 @@ def test_prenom_fallback_sans_prenom():
     ctx = MessageContext()
     _, body = render(C.SEGMENT_AIR_AIR, "J0", {"dept": "13"}, ctx)
     assert body.startswith("Bonjour,")  # pas de « Bonjour  , » disgracieux
+
+
+# --- A/B objet --------------------------------------------------------------
+def test_subject_for_variantes_distinctes():
+    for pos in POSITIONS:
+        a = subject_for(pos, "A")
+        b = subject_for(pos, "B")
+        assert a == SUBJECT_VARIANTS[pos][0]
+        assert b == SUBJECT_VARIANTS[pos][1]
+        assert a != b
+
+
+def test_subject_for_variante_inconnue_retombe_sur_A():
+    assert subject_for("J0", "Z") == subject_for("J0", "A")
+
+
+def test_assign_ab_stable_et_reparti():
+    # Stable : même clé → même bras.
+    assert assign_ab("42") == assign_ab("42")
+    # Réparti : sur un échantillon, les deux bras apparaissent.
+    bras = {assign_ab(str(i)) for i in range(50)}
+    assert bras == set(AB_LABELS)
+
+
+def test_render_respecte_la_variante():
+    ctx = MessageContext()
+    subj_a, _ = render(C.SEGMENT_AIR_EAU, "J0", {"dept": "44"}, ctx, variant="A")
+    subj_b, _ = render(C.SEGMENT_AIR_EAU, "J0", {"dept": "44"}, ctx, variant="B")
+    assert subj_a == SUBJECT_VARIANTS["J0"][0]
+    assert subj_b == SUBJECT_VARIANTS["J0"][1]
+
+
+def test_toutes_les_variantes_ab_sont_conformes():
+    ctx = MessageContext()
+    for seg in C.ACTIVABLE_SEGMENTS:
+        for pos in POSITIONS:
+            for ab in AB_LABELS:
+                subject, body = render(seg, pos, {"dept": "44"}, ctx, variant=ab)
+                assert validate_message(
+                    subject, body, calendly_url=ctx.calendly_url, optout_url=ctx.optout_url
+                ) == []
 
 
 def test_from_env_compose_reassurance(monkeypatch):

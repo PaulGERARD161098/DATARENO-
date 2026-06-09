@@ -25,7 +25,14 @@ from pathlib import Path
 from . import config as C
 from . import db as _db
 from .logging_setup import get_logger
-from .templates import POSITIONS, MessageContext, render, unfilled_placeholders, validate_message
+from .templates import (
+    POSITIONS,
+    MessageContext,
+    assign_ab,
+    render,
+    unfilled_placeholders,
+    validate_message,
+)
 
 logger = get_logger("datareno.drafts")
 
@@ -56,7 +63,9 @@ def generate_drafts(
     before = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
     skipped = 0
     for r in rows:
-        subject, body = render(r["segment"], position, {"dept": r["dept"] or ""}, ctx)
+        # A/B objet : bras stable par contact (toutes ses touches dans le même bras).
+        ab = assign_ab(str(r["id"]))
+        subject, body = render(r["segment"], position, {"dept": r["dept"] or ""}, ctx, variant=ab)
         violations = validate_message(
             subject, body, calendly_url=ctx.calendly_url, optout_url=ctx.optout_url
         )
@@ -72,7 +81,7 @@ def generate_drafts(
             VALUES (?, ?, ?, ?, ?, 'draft', ?)
             ON CONFLICT(contact_id, position) DO NOTHING
             """,
-            (r["id"], position, f"{r['segment']}:{position}:v1", subject, body, _db._now()),
+            (r["id"], position, f"{r['segment']}:{position}:{ab}", subject, body, _db._now()),
         )
     conn.commit()
 

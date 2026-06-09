@@ -117,3 +117,19 @@ def test_export_saute_les_placeholders(tmp_path: Path):
     n = drafts.export_mailmerge(conn, tmp_path / "drafts.csv", position="J0")
     assert n == 0  # tout est bloqué tant que CALENDLY_URL/OPTOUT_URL ne sont pas réels
     conn.close()
+
+
+def test_drafts_portent_un_bras_ab(tmp_path: Path):
+    """A/B : chaque draft encode un bras A ou B dans `variant`, stable par contact."""
+    from src.templates import SUBJECT_VARIANTS, assign_ab
+    conn = _db_with_contacts(tmp_path)
+    drafts.generate_drafts(conn, ctx=REAL_CTX, position="J0")
+    for row in conn.execute("SELECT contact_id, variant, subject FROM messages"):
+        ab = row["variant"].rsplit(":", 1)[-1]
+        assert ab in ("A", "B")
+        # Le bras est déterministe (fonction de l'id du contact)…
+        assert ab == assign_ab(str(row["contact_id"]))
+        # …et l'objet correspond bien à la variante du bras.
+        idx = 0 if ab == "A" else 1
+        assert row["subject"] == SUBJECT_VARIANTS["J0"][idx]
+    conn.close()
