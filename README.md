@@ -26,9 +26,11 @@ avec **clic humain pour envoyer/booker**. Autonome (SQLite local), hors stack R�
    python -m src.sequence --db out/state.sqlite simulate --days 7
    # 5. Envoi — DRY-RUN par défaut ; envoi réel = --confirm + transport
    python -m src.sender --db out/state.sqlite send                      # simulation
-   python -m src.sender --db out/state.sqlite send --confirm --export-dir out/outbox
-   # 6. Ingestion d'un retour (webhook/IMAP côté infra)
-   python -m src.sender --db out/state.sqlite ingest <email> bounce
+   python -m src.sender --db out/state.sqlite send --confirm --export-dir out/outbox  # export .eml
+   python -m src.sender --db out/state.sqlite send --confirm --smtp     # SMTP du domaine dédié (.env)
+   # 6. Ingestion des retours
+   python -m src.inbox  --db out/state.sqlite poll                      # poll IMAP (bounces/réponses)
+   python -m src.sender --db out/state.sqlite ingest <email> bounce     # ingestion manuelle d'un retour
    # 7. Réponses (l'humain valide la classe proposée)
    python -m src.replies --db out/state.sqlite apply <contact_id> STOP
    # 8. Reporting & A/B + dashboard

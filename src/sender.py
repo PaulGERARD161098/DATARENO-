@@ -17,8 +17,13 @@ from __future__ import annotations
 
 import argparse
 import os
+import smtplib
 import sqlite3
+from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from datetime import date
+from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 from pathlib import Path
 from typing import Callable
 
@@ -26,7 +31,7 @@ from . import db as _db
 from . import replies as _replies
 from .logging_setup import get_logger
 from .sequence import cap_for_day, warmup_caps
-from .templates import unfilled_placeholders
+from .templates import MessageContext, unfilled_placeholders
 
 logger = get_logger("datareno.sender")
 
@@ -180,6 +185,107 @@ def export_transport(outdir: str | Path) -> Transport:
     return _send
 
 
+# --- Transport SMTP réel (domaine dédié) -----------------------------------
+@dataclass
+class SmtpConfig:
+    """Paramètres SMTP du domaine dédié (jamais en dur : .env uniquement)."""
+    host: str
+    user: str
+    password: str
+    from_email: str
+    port: int = 587
+    starttls: bool = True
+    unsubscribe_mailto: str | None = None
+    timeout: float = 30.0
+
+    @classmethod
+    def from_env(cls) -> "SmtpConfig":
+        domain = os.getenv("SENDING_DOMAIN", "").strip()
+        from_email = os.getenv("SENDER_EMAIL", "").strip() or (f"contact@{domain}" if domain else "")
+        unsub = os.getenv("UNSUBSCRIBE_MAILTO", "").strip() or (
+            f"unsubscribe@{domain}" if domain else None
+        )
+        return cls(
+            host=os.getenv("SMTP_HOST", "").strip(),
+            user=os.getenv("SMTP_USER", "").strip(),
+            password=os.getenv("SMTP_PASSWORD", "").strip(),
+            from_email=from_email,
+            port=int(os.getenv("SMTP_PORT", "").strip() or 587),
+            starttls=(os.getenv("SMTP_STARTTLS", "true").strip().lower() != "false"),
+            unsubscribe_mailto=unsub,
+        )
+
+    def missing(self) -> list[str]:
+        """Champs requis non renseignés (refus d'envoi tant que non vide)."""
+        return [name for name, val in (
+            ("SMTP_HOST", self.host), ("SMTP_USER", self.user),
+            ("SMTP_PASSWORD", self.password), ("SENDER_EMAIL/SENDING_DOMAIN", self.from_email),
+        ) if not val]
+
+
+def build_mime(
+    to_email: str, subject: str, body: str, *,
+    from_email: str, sender_name: str, optout_url: str,
+    unsubscribe_mailto: str | None = None, domain: str | None = None,
+) -> EmailMessage:
+    """Construit un email texte conforme délivrabilité + RGPD (List-Unsubscribe)."""
+    msg = EmailMessage()
+    msg["From"] = f"{sender_name} <{from_email}>" if sender_name else from_email
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg["Reply-To"] = from_email
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain=domain or (from_email.split("@")[-1] or None))
+    # Opt-out 1-clic : améliore la délivrabilité et matérialise le droit RGPD.
+    targets = []
+    if unsubscribe_mailto:
+        targets.append(f"<mailto:{unsubscribe_mailto}?subject=unsubscribe>")
+    if optout_url.startswith("https://"):
+        targets.append(f"<{optout_url}>")
+    if targets:
+        msg["List-Unsubscribe"] = ", ".join(targets)
+        msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+    msg.set_content(body)
+    return msg
+
+
+# Un connecteur ouvre une session SMTP prête à `send_message` (context manager).
+SmtpConnector = Callable[[SmtpConfig], AbstractContextManager]
+
+
+def _default_smtp_connect(cfg: SmtpConfig) -> smtplib.SMTP:
+    """Ouvre une session SMTP réelle (STARTTLS par défaut), authentifiée, avec timeout."""
+    if cfg.starttls:
+        smtp = smtplib.SMTP(cfg.host, cfg.port, timeout=cfg.timeout)
+        smtp.starttls()
+    else:  # port 465 : TLS implicite
+        smtp = smtplib.SMTP_SSL(cfg.host, cfg.port, timeout=cfg.timeout)
+    smtp.login(cfg.user, cfg.password)
+    return smtp
+
+
+def smtp_transport(
+    cfg: SmtpConfig, ctx: MessageContext, *, connector: SmtpConnector | None = None
+) -> Transport:
+    """Transport SMTP réel. `connector` injectable (test sans réseau)."""
+    connector = connector or _default_smtp_connect
+
+    def _send(email: str, subject: str, body: str) -> bool:
+        msg = build_mime(
+            email, subject, body, from_email=cfg.from_email, sender_name=ctx.sender_name,
+            optout_url=ctx.optout_url, unsubscribe_mailto=cfg.unsubscribe_mailto,
+        )
+        try:
+            with connector(cfg) as smtp:
+                smtp.send_message(msg)
+            return True
+        except Exception:  # noqa: BLE001 — un échec d'envoi ne tue pas le batch
+            logger.warning("échec SMTP")  # aucune PII (pas d'email en log)
+            return False
+
+    return _send
+
+
 def ingest_event(
     conn: sqlite3.Connection, email: str, event_type: str, payload: str | None = None
 ) -> dict[str, object]:
@@ -212,7 +318,10 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("send", help="Envoie les messages dus (dry-run sauf --confirm).")
     s.add_argument("--confirm", action="store_true", help="Envoi réel (sinon simulation).")
-    s.add_argument("--export-dir", default=None, help="Mode export .eml vers ce dossier.")
+    transport_grp = s.add_mutually_exclusive_group()
+    transport_grp.add_argument("--export-dir", default=None, help="Mode export .eml vers ce dossier.")
+    transport_grp.add_argument("--smtp", action="store_true",
+                               help="Transport SMTP réel du domaine dédié (config .env).")
     s.add_argument("--day-index", type=int, default=None,
                    help="Position warm-up (0=J1). Défaut: auto (déduit des envois passés).")
     i = sub.add_parser("ingest", help="Enregistre un retour externe.")
@@ -225,7 +334,17 @@ def main(argv: list[str] | None = None) -> int:
     conn = _db.connect(args.db)
     try:
         if args.cmd == "send":
-            transport = export_transport(args.export_dir) if args.export_dir else None
+            if args.smtp:
+                cfg = SmtpConfig.from_env()
+                missing = cfg.missing()
+                if missing and args.confirm:
+                    print(f"⛔ SMTP non configuré : {', '.join(missing)}. Aucun envoi.")  # noqa: T201
+                    return 2
+                transport = smtp_transport(cfg, MessageContext.from_env())
+            elif args.export_dir:
+                transport = export_transport(args.export_dir)
+            else:
+                transport = None
             r = send_due(conn, on_date, transport, confirm=args.confirm, day_index=args.day_index)
             if r["dry_run"]:
                 print(  # noqa: T201

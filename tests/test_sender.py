@@ -170,3 +170,80 @@ def test_coupe_circuit_inactif_sous_echantillon(tmp_path: Path):
     assert "circuit_breaker" not in r
     assert r["sent"] == 2
     conn.close()
+
+
+# --- Transport SMTP réel ----------------------------------------------------
+from src.templates import MessageContext  # noqa: E402
+
+REAL_CTX = MessageContext(
+    calendly_url="https://calendly.com/expert/30min",
+    optout_url="https://exemple.fr/stop",
+    sender_name="Équipe CVC",
+)
+
+
+def test_build_mime_headers_et_optout():
+    msg = sender.build_mime(
+        "client@b.fr", "Objet", "Corps\nfin", from_email="contact@dom.fr",
+        sender_name="Équipe CVC", optout_url="https://exemple.fr/stop",
+        unsubscribe_mailto="unsubscribe@dom.fr",
+    )
+    assert msg["To"] == "client@b.fr"
+    assert msg["From"] == "Équipe CVC <contact@dom.fr>"
+    assert msg["Reply-To"] == "contact@dom.fr"
+    assert "https://exemple.fr/stop" in msg["List-Unsubscribe"]
+    assert "mailto:unsubscribe@dom.fr" in msg["List-Unsubscribe"]
+    assert msg["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
+    assert msg.get_content().strip() == "Corps\nfin"
+
+
+class _FakeSMTP:
+    """Faux client SMTP context-manager qui capture les messages envoyés."""
+    sent: list = []
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def send_message(self, msg):
+        _FakeSMTP.sent.append(msg)
+
+
+def test_smtp_transport_envoie_via_connecteur_injecte(tmp_path: Path):
+    _FakeSMTP.sent = []
+    conn = _seed(tmp_path, 2)
+    cfg = sender.SmtpConfig(host="smtp.dom.fr", user="u", password="p", from_email="contact@dom.fr")
+    transport = sender.smtp_transport(cfg, REAL_CTX, connector=_FakeSMTP)
+    r = sender.send_due(conn, D, transport=transport, confirm=True, caps=(10, 10, 10))
+    assert r["sent"] == 2
+    assert len(_FakeSMTP.sent) == 2
+    assert _FakeSMTP.sent[0]["From"] == "Équipe CVC <contact@dom.fr>"
+    conn.close()
+
+
+def test_smtp_transport_echec_ne_tue_pas_le_batch(tmp_path: Path):
+    conn = _seed(tmp_path, 2)
+
+    def _boom(cfg):
+        raise OSError("connexion refusée")
+
+    cfg = sender.SmtpConfig(host="x", user="u", password="p", from_email="contact@dom.fr")
+    transport = sender.smtp_transport(cfg, REAL_CTX, connector=_boom)
+    r = sender.send_due(conn, D, transport=transport, confirm=True, caps=(10, 10, 10))
+    assert r["sent"] == 0
+    assert r["failed"] == 2  # échecs comptés, aucune exception remontée
+    conn.close()
+
+
+def test_smtp_config_missing_detecte_les_trous():
+    cfg = sender.SmtpConfig(host="", user="u", password="", from_email="")
+    missing = cfg.missing()
+    assert "SMTP_HOST" in missing
+    assert "SMTP_PASSWORD" in missing
+    assert "SENDER_EMAIL/SENDING_DOMAIN" in missing
+    assert "SMTP_USER" not in missing
