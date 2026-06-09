@@ -16,6 +16,7 @@ l'extérieur (webhook ESP ou poll IMAP — câblage = infra, hors de ce module).
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 from datetime import date
 from pathlib import Path
@@ -25,11 +26,22 @@ from . import db as _db
 from . import replies as _replies
 from .logging_setup import get_logger
 from .sequence import cap_for_day, warmup_caps
+from .templates import unfilled_placeholders
 
 logger = get_logger("datareno.sender")
 
 # Un transport prend (email, subject, body) et renvoie True si l'envoi a réussi.
 Transport = Callable[[str, str, str], bool]
+
+# Coupe-circuit bounce-rate (A4) : ne s'active qu'au-delà de cet échantillon d'envois.
+BOUNCE_MIN_SAMPLE = 50
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, "").strip() or default)
+    except ValueError:
+        return default
 
 
 def due_messages(conn: sqlite3.Connection, on_date: date) -> list[sqlite3.Row]:
@@ -53,6 +65,26 @@ def _sent_today(conn: sqlite3.Connection, on_date: date) -> int:
     ).fetchone()[0]
 
 
+def auto_day_index(conn: sqlite3.Connection, on_date: date) -> int:
+    """Position warm-up = nombre de jours DISTINCTS déjà envoyés avant `on_date`.
+
+    Défensif (A1) : remplace le `day_index` codé en dur. Si l'envoi passe par l'ESP
+    (aucun event `sent` écrit), reste à 0 → plafond bas 30/j, jamais le plateau 100.
+    """
+    return conn.execute(
+        "SELECT COUNT(DISTINCT substr(created_at,1,10)) FROM events "
+        "WHERE type='sent' AND substr(created_at,1,10) < ?",
+        (on_date.isoformat(),),
+    ).fetchone()[0]
+
+
+def bounce_stats(conn: sqlite3.Connection) -> tuple[int, int, float]:
+    """(envois, bounces, taux) sur tout l'historique d'envoi connu du tool."""
+    sent = conn.execute("SELECT COUNT(*) FROM events WHERE type='sent'").fetchone()[0]
+    bounced = conn.execute("SELECT COUNT(*) FROM events WHERE type='bounce'").fetchone()[0]
+    return sent, bounced, (bounced / sent if sent else 0.0)
+
+
 def send_due(
     conn: sqlite3.Connection,
     on_date: date | None = None,
@@ -60,31 +92,52 @@ def send_due(
     *,
     confirm: bool = False,
     caps: tuple[int, int, int] | None = None,
-    day_index: int = 2,
+    day_index: int | None = None,
+    bounce_limit: float | None = None,
+    bounce_min_sample: int = BOUNCE_MIN_SAMPLE,
 ) -> dict[str, int]:
     """Envoie les messages dus (si confirm + transport), sinon simule (dry-run).
 
-    `day_index` situe `on_date` dans le warm-up (0 = J1). Par défaut 2 (plateau).
+    `day_index` situe `on_date` dans le warm-up (0 = J1). Par défaut **auto** (A1) :
+    déduit du nombre de jours déjà envoyés (cf. `auto_day_index`). Un entier explicite
+    force la valeur (override de test / rattrapage manuel).
     """
     on_date = on_date or date.today()
     caps = caps or warmup_caps()
+    if day_index is None:
+        day_index = auto_day_index(conn, on_date)
     cap = cap_for_day(day_index, caps)
     remaining = max(0, cap - _sent_today(conn, on_date))
 
     due = due_messages(conn, on_date)
+    # Garde-fou B1 : jamais d'envoi d'un corps contenant un placeholder « [..] » non
+    # renseigné (opt-out / CTA morts). On les écarte avant toute tentative d'envoi.
+    sendable = [row for row in due if not unfilled_placeholders(row["body"])]
+    blocked_placeholder = len(due) - len(sendable)
     dry_run = not (confirm and transport is not None)
 
-    result = {"due": len(due), "cap": cap, "remaining_cap": remaining,
-              "sent": 0, "failed": 0, "skipped_cap": 0, "dry_run": int(dry_run)}
+    result = {"due": len(due), "cap": cap, "day_index": day_index,
+              "remaining_cap": remaining, "sent": 0, "failed": 0, "skipped_cap": 0,
+              "blocked_placeholder": blocked_placeholder, "dry_run": int(dry_run)}
 
     if dry_run:
-        result["would_send"] = min(len(due), remaining)
+        result["would_send"] = min(len(sendable), remaining)
         logger.info("send dry-run", extra={"context": result})
         return result
 
-    for row in due:
+    # Coupe-circuit A4 : bounce-rate trop élevé → on stoppe tout envoi (domaine en danger).
+    if bounce_limit is None:
+        bounce_limit = _env_float("BOUNCE_RATE_LIMIT", 0.05)
+    sent_total, _bounced, rate = bounce_stats(conn)
+    if sent_total >= bounce_min_sample and rate > bounce_limit:
+        result["circuit_breaker"] = "bounce_rate"
+        result["bounce_rate"] = round(rate, 4)
+        logger.warning("coupe-circuit bounce-rate", extra={"context": result})
+        return result
+
+    for row in sendable:
         if result["sent"] >= remaining:
-            result["skipped_cap"] = len(due) - result["sent"]
+            result["skipped_cap"] = len(sendable) - result["sent"]
             break
         ok = False
         try:
@@ -160,7 +213,8 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("send", help="Envoie les messages dus (dry-run sauf --confirm).")
     s.add_argument("--confirm", action="store_true", help="Envoi réel (sinon simulation).")
     s.add_argument("--export-dir", default=None, help="Mode export .eml vers ce dossier.")
-    s.add_argument("--day-index", type=int, default=2, help="Position warm-up (0=J1).")
+    s.add_argument("--day-index", type=int, default=None,
+                   help="Position warm-up (0=J1). Défaut: auto (déduit des envois passés).")
     i = sub.add_parser("ingest", help="Enregistre un retour externe.")
     i.add_argument("email")
     i.add_argument("type", choices=("open", "reply", "bounce", "optout", "click"))
@@ -176,13 +230,21 @@ def main(argv: list[str] | None = None) -> int:
             if r["dry_run"]:
                 print(  # noqa: T201
                     f"DRY-RUN — dus={r['due']} · enverrait={r.get('would_send', 0)} "
-                    f"(plafond restant {r['remaining_cap']}/{r['cap']}). Aucun envoi.\n"
+                    f"(warm-up J{r['day_index']}, plafond restant {r['remaining_cap']}/{r['cap']}) "
+                    f"· bloqués placeholder={r['blocked_placeholder']}. Aucun envoi.\n"
                     "Ajoutez --confirm + --export-dir (ou un transport SMTP) pour envoyer."
+                )
+            elif r.get("circuit_breaker"):
+                print(  # noqa: T201
+                    f"⛔ ENVOI BLOQUÉ — coupe-circuit {r['circuit_breaker']} "
+                    f"(bounce-rate {r.get('bounce_rate')}). Aucun envoi : vérifiez la qualité de la base."
                 )
             else:
                 print(  # noqa: T201
                     f"ENVOI — envoyés={r['sent']} · échecs={r['failed']} · "
-                    f"non envoyés (plafond)={r['skipped_cap']}"
+                    f"non envoyés (plafond)={r['skipped_cap']} · "
+                    f"bloqués placeholder={r['blocked_placeholder']} · "
+                    f"warm-up J{r['day_index']} (plafond {r['cap']})"
                 )
         elif args.cmd == "ingest":
             r = ingest_event(conn, args.email, args.type, args.payload)

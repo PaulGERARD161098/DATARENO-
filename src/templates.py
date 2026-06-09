@@ -45,6 +45,18 @@ def lint_claims(text: str) -> list[str]:
     return sorted(found)
 
 
+# Détecteur de placeholders non renseignés ([VOTRE_LIEN_CALENDLY], [LIEN_DESINSCRIPTION]…).
+# Aucun template légitime n'utilise de crochets : tout « [..] » résiduel = champ vide.
+# Garde-fou B1 (pre-mortem) : on refuse d'EXPORTER ou d'ENVOYER un corps qui en contient
+# (opt-out / CTA morts = violation RGPD + funnel cassé), même si le linter de claims passe.
+_PLACEHOLDER_RE = re.compile(r"\[[^\]]+\]")
+
+
+def unfilled_placeholders(text: str) -> list[str]:
+    """Liste triée/unique des placeholders « [..] » encore présents dans le texte."""
+    return sorted(set(_PLACEHOLDER_RE.findall(text)))
+
+
 def validate_message(subject: str, body: str, *, calendly_url: str, optout_url: str) -> list[str]:
     """Linter de claims + règles structurelles (1 CTA Calendly, opt-out présent)."""
     violations = lint_claims(subject + "\n" + body)

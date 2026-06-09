@@ -50,7 +50,13 @@ Vue état pipeline + file de validation drafts/réponses (lecture SQLite).
 2. **Domaine d'envoi dédié** + DNS **SPF / DKIM / DMARC** configurés ; warm-up réel respecté.
 3. **Choix du canal d'envoi** : ESP (SMTP) du domaine dédié **ou** Gmail Workspace.
 4. **Preuve d'opt-in email** archivée et accessible (base légale RGPD/DGCCRF).
-5. **Pre-mortem** avant la 1ʳᵉ campagne réelle (consigne CLAUDE.md) + TEST POV sur les mails finalisés.
+5. **Pre-mortem** fait — voir `PREMORTEM.md`. **Gate Go/No-Go** à respecter avant le 1ᵉʳ envoi :
+   - **B2** base légale opt-in email vérifiée/archivée *(seul showstopper, hors code)* ·
+   - **B1** `CALENDLY_URL` + `OPTOUT_URL` réels en `https://`, opt-out testé cliquable ·
+   - **A5** SPF/DKIM/DMARC validés · **A1** warm-up réellement appliqué (départ 30/j) ·
+   - test **micro-lot 20-30** avant les 5 200.
+   Landmines code désamorcés (A1 warm-up auto, B1 garde-fou placeholders, A3 suppression
+   à l'export, A4 coupe-circuit bounce) ; reste B2/A5 (ops) + B4 ingestion auto.
 
 ## 🔑 Variables `.env` attendues
 `CALENDLY_URL`, `OPTOUT_URL`, `SENDER_NAME`, `SENDING_DOMAIN`, `DRAFT_MODE`,
