@@ -80,10 +80,14 @@ def ingest_bookings(conn: sqlite3.Connection, bookings: list[Booking]) -> dict[s
 
 
 def _api_get(cfg: CalendlyConfig, url: str) -> dict:
+    # Garde-fou : on ne suit que des URL https Calendly (une partie vient des réponses
+    # API — un `uri` forgé ne doit pas rediriger urlopen vers file:// ou http://).
+    if not url.startswith("https://api.calendly.com"):
+        raise ValueError("URL Calendly non autorisée")
     req = urllib.request.Request(url, headers={
         "Authorization": f"Bearer {cfg.token}", "Content-Type": "application/json",
     })
-    with urllib.request.urlopen(req, timeout=cfg.timeout) as resp:  # noqa: S310 (https constant)
+    with urllib.request.urlopen(req, timeout=cfg.timeout) as resp:  # noqa: S310 (https vérifié)
         return json.loads(resp.read().decode("utf-8"))
 
 
