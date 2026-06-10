@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from email.message import Message
 from typing import Callable, Iterator
 
+from . import config as _C
 from . import db as _db
 from . import replies as _replies
 from . import sender as _sender
@@ -44,13 +45,55 @@ _EMAIL_FIND = re.compile(r"[^@\s<>\"]+@[^@\s<>\"]+\.[^@\s<>\"]+")
 # Expéditeurs typiques d'un avis de non-remise.
 _DAEMON_HINTS = ("mailer-daemon", "postmaster", "mail delivery")
 
+# Bounce SOFT (temporaire) : ne pas supprimer le contact, c'est récupérable.
+_SOFT_HINTS = (
+    "temporhttps", "temporaire", "temporarily", "try again", "mailbox full", "boite pleine",
+    "boîte pleine", "over quota", "quota exceeded", "delayed", "deferred", "greylist",
+    "4.2.2", "4.2.1", "4.3.1", "4.7.1",
+)
+# Bounce HARD (permanent) : adresse morte → suppression.
+_HARD_HINTS = (
+    "user unknown", "no such user", "does not exist", "adresse introuvable",
+    "address not found", "mailbox unavailable", "5.1.1", "550 5.1.1", "recipient rejected",
+)
+# Réponse automatique (absence / OOO) : ce N'EST PAS un engagement, la séquence continue.
+_AUTOREPLY_HINTS = (
+    "absent", "absence", "out of office", "ooo", "autoreply", "auto-reply", "automatic reply",
+    "reponse automatique", "réponse automatique", "conges", "congés", "en vacances",
+    "de retour le", "je serai de retour", "actuellement absent",
+)
+
+# Au-delà de N bounces soft pour un même contact, on escalade en suppression.
+SOFT_BOUNCE_ESCALATE = 3
+
+# Genres de retour possibles.
+KIND_BOUNCE_HARD = "bounce_hard"
+KIND_BOUNCE_SOFT = "bounce_soft"
+KIND_AUTOREPLY = "auto_reply"
+KIND_REPLY = "reply"
+
 
 def classify_inbound(from_email: str, subject: str, body: str) -> tuple[str, str]:
-    """Retourne (kind, classe_proposée) où kind ∈ {'bounce', 'reply'}."""
-    label = _replies.classify_reply(f"{subject}\n{body}")
+    """Retourne (kind, classe_proposée).
+
+    kind ∈ {bounce_hard, bounce_soft, auto_reply, reply}. La classe proposée
+    n'a de sens que pour `reply` (à valider par un humain).
+    """
+    text = _C.strip_accents(f"{subject}\n{body}").lower()
     sender_l = (from_email or "").lower()
+    label = _replies.classify_reply(f"{subject}\n{body}")
+
     is_bounce = label == _replies.BOUNCE or any(h in sender_l for h in _DAEMON_HINTS)
-    return ("bounce" if is_bounce else "reply", label)
+    if is_bounce:
+        # Ambigu → HARD par défaut : protéger la réputation du domaine prime (pre-mortem).
+        if any(h in text for h in _SOFT_HINTS) and not any(h in text for h in _HARD_HINTS):
+            return KIND_BOUNCE_SOFT, _replies.BOUNCE
+        return KIND_BOUNCE_HARD, _replies.BOUNCE
+
+    if any(h in text for h in _AUTOREPLY_HINTS):
+        return KIND_AUTOREPLY, _replies.RECONTACTER
+
+    return KIND_REPLY, label
 
 
 def _known_email(conn: sqlite3.Connection, *texts: str) -> str | None:
@@ -68,37 +111,67 @@ def _known_email(conn: sqlite3.Connection, *texts: str) -> str | None:
     return None
 
 
+def _count_events(conn: sqlite3.Connection, contact_id: int, event_type: str) -> int:
+    return conn.execute(
+        "SELECT COUNT(*) FROM events WHERE contact_id=? AND type=?", (contact_id, event_type)
+    ).fetchone()[0]
+
+
 def ingest_inbound(
     conn: sqlite3.Connection, from_email: str, subject: str, body: str
 ) -> dict[str, object]:
-    """Ingère un message entrant. Bounce → suppression ; réponse → arrêt + classe proposée."""
+    """Ingère un message entrant selon son genre (bounce hard/soft, auto-reply, réponse)."""
     kind, label = classify_inbound(from_email, subject, body)
 
-    if kind == "bounce":
+    if kind in (KIND_BOUNCE_HARD, KIND_BOUNCE_SOFT):
         # Le destinataire en échec est dans le corps du DSN, pas dans le From (daemon).
         target = _known_email(conn, body, subject, from_email)
         if not target:
             logger.info("bounce sans destinataire connu")
-            return {"ok": False, "kind": "bounce", "reason": "destinataire_introuvable"}
-        _sender.ingest_event(conn, target, "bounce")
-        return {"ok": True, "kind": "bounce", "label": label}
+            return {"ok": False, "kind": kind, "reason": "destinataire_introuvable"}
+        row = conn.execute("SELECT id FROM contacts WHERE email=?", (target,)).fetchone()
+        contact_id = row["id"]
+        if kind == KIND_BOUNCE_HARD:
+            _sender.ingest_event(conn, target, "bounce")  # → suppression définitive
+            return {"ok": True, "kind": kind}
+        # Soft : on journalise sans supprimer ; escalade au-delà du seuil.
+        conn.execute(
+            "INSERT INTO events (contact_id, type, created_at) VALUES (?, 'soft_bounce', ?)",
+            (contact_id, _db._now()),
+        )
+        conn.commit()
+        soft_count = _count_events(conn, contact_id, "soft_bounce")
+        if soft_count >= SOFT_BOUNCE_ESCALATE:
+            _sender.ingest_event(conn, target, "bounce")  # trop de soft → suppression
+            return {"ok": True, "kind": kind, "escalated": True, "soft_count": soft_count}
+        return {"ok": True, "kind": kind, "escalated": False, "soft_count": soft_count}
 
-    # Réponse d'un contact : on cherche par adresse expéditrice.
+    # Pour auto-reply et réponse, on identifie par l'adresse expéditrice.
     target = (from_email or "").lower()
     row = conn.execute("SELECT id FROM contacts WHERE email=?", (target,)).fetchone()
     if not row:
-        logger.info("réponse d'un expéditeur inconnu")
-        return {"ok": False, "kind": "reply", "reason": "contact_inconnu"}
+        logger.info("message d'un expéditeur inconnu")
+        return {"ok": False, "kind": kind, "reason": "contact_inconnu"}
     contact_id = row["id"]
-    # Une réponse stoppe la séquence (aucune relance cold ne doit plus partir).
+
+    if kind == KIND_AUTOREPLY:
+        # Absence/OOO : pas un engagement → on journalise SANS arrêter la séquence.
+        conn.execute(
+            "INSERT INTO events (contact_id, type, created_at) VALUES (?, 'auto_reply', ?)",
+            (contact_id, _db._now()),
+        )
+        conn.commit()
+        logger.info("auto-reply ingéré (séquence maintenue)", extra={"context": {"contact_id": contact_id}})
+        return {"ok": True, "kind": kind, "contact_id": contact_id, "applied": False}
+
+    # Réponse réelle : stoppe la séquence + classe proposée (action finale validée par un humain).
     cancelled = _replies.cancel_pending(conn, contact_id)
-    # On journalise la classe PROPOSÉE ; l'action finale reste validée par un humain.
     _replies.record_reply(conn, contact_id, label)
     conn.commit()
     logger.info("réponse ingérée", extra={"context": {
         "contact_id": contact_id, "proposed": label, "cancelled": cancelled, "applied": False,
     }})
-    return {"ok": True, "kind": "reply", "contact_id": contact_id,
+    return {"ok": True, "kind": KIND_REPLY, "contact_id": contact_id,
             "proposed": label, "cancelled": cancelled, "applied": False}
 
 
@@ -183,14 +256,21 @@ def poll_inbox(
 ) -> dict[str, int]:
     """Relève la boîte et ingère chaque message. Retourne une synthèse comptée."""
     fetcher = fetcher or _default_imap_fetch
-    summary = {"seen": 0, "bounces": 0, "replies": 0, "unknown": 0}
+    summary = {"seen": 0, "bounces": 0, "soft_bounces": 0, "auto_replies": 0,
+               "replies": 0, "unknown": 0}
     for from_email, subject, body in fetcher(cfg):
         summary["seen"] += 1
         r = ingest_inbound(conn, from_email, subject, body)
         if not r["ok"]:
             summary["unknown"] += 1
-        elif r["kind"] == "bounce":
+        elif r["kind"] == KIND_BOUNCE_HARD:
             summary["bounces"] += 1
+        elif r["kind"] == KIND_BOUNCE_SOFT:
+            summary["soft_bounces"] += 1
+            if r.get("escalated"):
+                summary["bounces"] += 1
+        elif r["kind"] == KIND_AUTOREPLY:
+            summary["auto_replies"] += 1
         else:
             summary["replies"] += 1
     logger.info("poll inbox", extra={"context": summary})
@@ -214,7 +294,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             s = poll_inbox(conn, cfg)
             print(  # noqa: T201
-                f"Poll IMAP — relevés={s['seen']} · bounces={s['bounces']} · "
+                f"Poll IMAP — relevés={s['seen']} · bounces={s['bounces']} "
+                f"(soft={s['soft_bounces']}) · auto-replies={s['auto_replies']} · "
                 f"réponses={s['replies']} · inconnus={s['unknown']}\n"
                 "Réponses : classe proposée journalisée — valider via `src.replies apply`."
             )

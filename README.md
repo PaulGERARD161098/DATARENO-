@@ -17,20 +17,24 @@ avec **clic humain pour envoyer/booker**. Autonome (SQLite local), hors stack R�
    ```bash
    # 1. Tri : segments + dédup + isolés + liste « à rappeler » + synthèse
    python -m src.tri data/<ta_base>.xlsx --outdir out
-   # 2. État SQLite (import idempotent des contacts activables)
+   # 2. État SQLite (import idempotent) + hygiène (purge adresses rôle/jetable)
    python -m src.db --db out/state.sqlite import out/segments
-   # 3. Brouillons (statut draft, aucun envoi)
+   python -m src.db --db out/state.sqlite hygiene
+   # 3. Brouillons personnalisés (prénom, statut draft, aucun envoi)
    python -m src.drafts --db out/state.sqlite generate
    # 4. Séquençage J0/J+4/J+8 + warm-up (aucun envoi)
    python -m src.sequence --db out/state.sqlite plan
    python -m src.sequence --db out/state.sqlite simulate --days 7
+   # 4 bis. Gate Go/No-Go avant tout envoi réel (exit 1 = NO-GO)
+   python -m src.preflight --db out/state.sqlite check
    # 5. Envoi — DRY-RUN par défaut ; envoi réel = --confirm + transport
    python -m src.sender --db out/state.sqlite send                      # simulation
    python -m src.sender --db out/state.sqlite send --confirm --export-dir out/outbox  # export .eml
    python -m src.sender --db out/state.sqlite send --confirm --smtp     # SMTP du domaine dédié (.env)
    # 6. Ingestion des retours
-   python -m src.inbox  --db out/state.sqlite poll                      # poll IMAP (bounces/réponses)
-   python -m src.sender --db out/state.sqlite ingest <email> bounce     # ingestion manuelle d'un retour
+   python -m src.inbox    --db out/state.sqlite poll                    # poll IMAP (bounces hard/soft, auto-reply, réponses)
+   python -m src.calendly --db out/state.sqlite poll                    # poll RDV Calendly → event 'rdv'
+   python -m src.sender   --db out/state.sqlite ingest <email> bounce   # ingestion manuelle d'un retour
    # 7. Geste quotidien tout-en-un : ingérer les retours PUIS envoyer le dû
    python -m src.daily  --db out/state.sqlite run                       # simulation
    python -m src.daily  --db out/state.sqlite run --confirm --smtp      # ingestion + envoi réels

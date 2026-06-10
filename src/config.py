@@ -5,6 +5,7 @@ phases suivantes vivent dans .env (voir .env.example), jamais en dur.
 """
 from __future__ import annotations
 
+import re
 import unicodedata
 
 # --- Segments (verrouillés, cf. SPEC.md) ---------------------------------
@@ -89,3 +90,55 @@ def normalize_chauffage(raw: str | None) -> str:
         return ""
     cleaned = strip_accents(str(raw)).upper().strip()
     return " ".join(cleaned.split())
+
+
+# --- Personnalisation & hygiène d'adresses (cold email) -------------------
+# Civilités retirées avant d'extraire un prénom.
+_CIVILITES = {"M", "MR", "MME", "MLLE", "MX", "DR", "ME", "MONSIEUR", "MADAME", "MADEMOISELLE"}
+# Un prénom plausible : lettres (accents/trait d'union/apostrophe), 2 à 25 caractères.
+_PRENOM_RE = re.compile(r"^[a-zà-ÿ][a-zà-ÿ'\-]{1,24}$", re.IGNORECASE)
+
+# Préfixes d'adresses « rôle » (génériques) : à éviter en cold email (plaintes/bounces).
+ROLE_LOCALPARTS = {
+    "contact", "info", "infos", "noreply", "no-reply", "ne-pas-repondre", "nepasrepondre",
+    "postmaster", "admin", "webmaster", "sav", "abuse", "support", "commercial",
+    "compta", "comptabilite", "accueil", "direction", "hello", "bonjour", "mailer-daemon",
+}
+# Domaines jetables/temporaires les plus courants : zéro valeur, risque de spamtrap.
+DISPOSABLE_DOMAINS = {
+    "mailinator.com", "yopmail.com", "yopmail.fr", "guerrillamail.com", "10minutemail.com",
+    "trashmail.com", "tempmail.com", "temp-mail.org", "jetable.org", "throwawaymail.com",
+}
+
+
+def first_name(nom: str | None) -> str:
+    """Extrait un prénom présentable d'un nom complet, ou '' si incertain.
+
+    Conservateur (un mauvais prénom est pire que pas de prénom) : si un token est en
+    Titlecase et d'autres en CAPITALES, le Titlecase est le prénom (les bases écrivent
+    souvent le NOM en capitales) ; sinon on prend le 1ᵉʳ token plausible.
+    """
+    if not nom:
+        return ""
+    raw = [t for t in re.split(r"[\s.]+", nom.strip()) if t]
+    tokens = [t for t in raw if strip_accents(t).upper().rstrip(".") not in _CIVILITES]
+    if not tokens:
+        return ""
+    titlecased = [t for t in tokens if t[:1].isupper() and len(t) > 1 and t[1:].islower()]
+    allcaps = [t for t in tokens if t.isupper() and len(t) > 1]
+    candidate = titlecased[0] if (len(titlecased) == 1 and allcaps) else tokens[0]
+    return candidate.title() if _PRENOM_RE.match(candidate) else ""
+
+
+def is_role_email(email: str | None) -> bool:
+    """True si l'adresse est générique (contact@, info@…) — à éviter en cold email."""
+    if not email or "@" not in email:
+        return False
+    return email.split("@", 1)[0].strip().lower() in ROLE_LOCALPARTS
+
+
+def is_disposable_email(email: str | None) -> bool:
+    """True si le domaine est jetable/temporaire."""
+    if not email or "@" not in email:
+        return False
+    return email.rsplit("@", 1)[-1].strip().lower() in DISPOSABLE_DOMAINS

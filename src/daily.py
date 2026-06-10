@@ -22,6 +22,7 @@ import argparse
 import sqlite3
 from datetime import date
 
+from . import calendly as _calendly
 from . import db as _db
 from . import inbox as _inbox
 from . import sender as _sender
@@ -39,22 +40,29 @@ def run_daily(
     confirm: bool = False,
     imap_cfg: _inbox.ImapConfig | None = None,
     imap_fetcher: _inbox.Fetcher | None = None,
+    calendly_cfg: _calendly.CalendlyConfig | None = None,
+    calendly_fetcher: _calendly.Fetcher | None = None,
     day_index: int | None = None,
 ) -> dict[str, object]:
-    """Ingère les retours (si IMAP configuré) puis envoie le dû du jour."""
+    """Ingère les retours + RDV (si configurés) puis envoie le dû du jour."""
     on_date = on_date or date.today()
-    summary: dict[str, object] = {"inbox": None, "send": None}
+    summary: dict[str, object] = {"inbox": None, "calendly": None, "send": None}
 
     # 1. Retours d'abord : un STOP/bounce arrivé doit bloquer l'envoi du jour même.
     if imap_cfg is not None and not imap_cfg.missing():
         summary["inbox"] = _inbox.poll_inbox(conn, imap_cfg, fetcher=imap_fetcher)
 
-    # 2. Envoi du dû (dry-run si pas de transport/confirm).
+    # 2. RDV pris : booké → statut rdv + relances annulées (avant l'envoi du jour).
+    if calendly_cfg is not None and not calendly_cfg.missing():
+        summary["calendly"] = _calendly.poll_calendly(conn, calendly_cfg, fetcher=calendly_fetcher)
+
+    # 3. Envoi du dû (dry-run si pas de transport/confirm).
     summary["send"] = _sender.send_due(
         conn, on_date, transport, confirm=confirm, day_index=day_index
     )
     logger.info("run quotidien", extra={"context": {
         "polled": summary["inbox"] is not None,
+        "rdv": summary["calendly"] is not None,
         "sent": summary["send"].get("sent", 0),
         "dry_run": summary["send"].get("dry_run"),
     }})
@@ -87,25 +95,31 @@ def main(argv: list[str] | None = None) -> int:
     else:
         transport = None
 
-    # Ingestion IMAP (sauf --no-poll et si configurée)
+    # Ingestion IMAP + Calendly (sauf --no-poll et si configurées)
     imap_cfg = None if args.no_poll else _inbox.ImapConfig.from_env()
     if imap_cfg is not None and imap_cfg.missing():
         logger.info("IMAP non configuré : poll ignoré ce jour")
         imap_cfg = None
+    calendly_cfg = None if args.no_poll else _calendly.CalendlyConfig.from_env()
+    if calendly_cfg is not None and calendly_cfg.missing():
+        calendly_cfg = None
 
     conn = _db.connect(args.db)
     try:
         s = run_daily(conn, transport=transport, confirm=args.confirm,
-                      imap_cfg=imap_cfg, day_index=args.day_index)
+                      imap_cfg=imap_cfg, calendly_cfg=calendly_cfg, day_index=args.day_index)
         inbox_s = s["inbox"]
         send_s = s["send"]
         if inbox_s is not None:
             print(  # noqa: T201
-                f"Retours — relevés={inbox_s['seen']} · bounces={inbox_s['bounces']} · "
+                f"Retours — relevés={inbox_s['seen']} · bounces={inbox_s['bounces']} "
+                f"(soft={inbox_s['soft_bounces']}) · auto-replies={inbox_s['auto_replies']} · "
                 f"réponses={inbox_s['replies']} · inconnus={inbox_s['unknown']}"
             )
         else:
             print("Retours — poll IMAP ignoré.")  # noqa: T201
+        if s["calendly"] is not None:
+            print(f"RDV Calendly — nouveaux={s['calendly']['matched']}")  # noqa: T201
         if send_s.get("dry_run"):
             print(  # noqa: T201
                 f"Envoi (DRY-RUN) — dus={send_s['due']} · enverrait={send_s.get('would_send', 0)} "

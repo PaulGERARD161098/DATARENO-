@@ -11,70 +11,66 @@ Projet : DATA RÉNO Pipeline — cold outreach EMAIL d'une base réno (B2C, 5 20
 vers RDV PAC. Python + SQLite local, autonome. Repo : paggerard-boop/DATARENO-.
 Tout auto SAUF 2 clics humains : envoyer + booker. Conformité DGCCRF/RGPD = cœur.
 
-ÉTAT À LA FERMETURE (2026-06-10) :
-- Branche de travail : claude/datareno-pipeline-setup-km56q4 (PR #2 draft vers main,
-  CI verte). 128 tests verts, ruff clean. Working tree propre, tout poussé.
-- OUTIL COMPLET ET OPÉRATIONNEL (build terminé) :
-  src/ = tri, db, templates(+linter claims+placeholders+A/B), drafts, sequence,
-  sender(SMTP réel+export .eml+dry-run défaut), inbox(poll IMAP), daily(run quotidien),
-  recontact(remise en file 3 mois), replies, report(A/B), dashboard, config, models,
-  logging_setup(JSON sans PII).
-- Garde-fous actifs (issus du pre-mortem, voir PREMORTEM.md) :
-  warm-up AUTO (day_index déduit des envois passés, départ 30/j) · refus placeholders
-  [..] à l'export ET à l'envoi · liste de suppression appliquée partout (envoi + export
-  ESP) · coupe-circuit bounce-rate (BOUNCE_RATE_LIMIT=5%, échantillon min 50) ·
-  TLS vérifié + timeout SMTP/IMAP · anti header-injection · jamais d'auto-envoi.
+ÉTAT (v1.0 — l'outil fait le travail initialement prévu, prouvé en démo end-to-end) :
+- main à jour (PR #2 mergée ; PR de l'incrément v1.0 = voir GitHub). 159 tests verts,
+  ruff clean. Développement sur claude/datareno-pipeline-setup-km56q4 (repartir de main).
+- PIPELINE COMPLET & RUNNABLE :
+  tri → db(import+hygiene) → drafts(perso prénom + A/B) → sequence → PREFLIGHT(gate
+  Go/No-Go) → daily run(ingestion retours IMAP + RDV Calendly PUIS envoi SMTP) →
+  report(funnel+A/B) → dashboard. + recontact(remise en file 3 mois).
+- GARDE-FOUS : warm-up auto · refus placeholders · re-lint claims à l'envoi · suppression
+  partout · coupe-circuit bounce · TLS vérifié SMTP/IMAP · anti header-injection ·
+  bounce hard→purge / soft→escalade · auto-reply/OOO ne stoppe pas la séquence ·
+  hygiène adresses rôle/jetable · jamais d'auto-envoi.
 
-GESTE QUOTIDIEN CIBLE (déjà câblé) :
-  python -m src.daily run --confirm --smtp        # ingère retours PUIS envoie le dû
-  python -m src.recontact requeue --and-plan      # hebdo : réinjecte les 3 mois échus
-  python -m src.report                            # funnel + reco A/B (humain décide)
+GESTE QUOTIDIEN (cron-ready, voir DEPLOY.md) :
+  python -m src.preflight --db out/state.sqlite check        # gate, exit 1 = NO-GO
+  python -m src.daily run --confirm --smtp                   # ingère retours+RDV puis envoie
+  python -m src.recontact requeue --and-plan                 # hebdo : 3 mois échus
+  python -m src.report                                       # funnel + reco A/B
 
-"MES CHOSES" EN ATTENTE (bloquant l'envoi réel — les CLI refusent tant que vide) :
+"MES CHOSES" EN ATTENTE (bloquent l'envoi réel — les CLI refusent tant que vide) :
   1. B2 = base légale opt-in email vérifiée/archivée → LE SEUL SHOWSTOPPER (légal).
-  2. DNS SPF/DKIM/DMARC du domaine dédié + test mail-tester.com (A5).
-  3. .env : SMTP_HOST/USER/PASSWORD, SENDER_EMAIL, UNSUBSCRIBE_MAILTO,
-     IMAP_HOST/USER/PASSWORD, CALENDLY_URL, OPTOUT_URL, SENDER_NAME,
-     REASSURANCE_RGE/DECENNALE/NB_CHANTIERS.
-  4. UI GitHub : merger la PR #2 (la passer ready-for-review) ; supprimer la branche
-     remote claude/intelligent-brahmagupta-5JMtm (proxy 403 → manuel).
+  2. DNS SPF/DKIM/DMARC du domaine dédié + mail-tester.com (A5).
+  3. .env : SMTP_*, SENDER_EMAIL, UNSUBSCRIBE_MAILTO, IMAP_*, CALENDLY_URL, CALENDLY_TOKEN,
+     OPTOUT_URL, SENDER_NAME, REASSURANCE_*.
+  4. UI GitHub : supprimer les branches mergées/obsolètes (proxy bloque la suppression).
+  5. Brancher le cron du run quotidien (DEPLOY.md §6) + sauvegarder out/state.sqlite.
 
-CHANTIERS OUVERTS (par valeur décroissante) :
-  a) Câbler le RDV réel : webhook/poll Calendly → event 'rdv' (ferme le funnel
-     jusqu'à l'objectif final ; aujourd'hui la métrique RDV est manuelle). [C2]
-  b) Micro-lot test 20-30 contacts après config .env + DNS (gate PREMORTEM.md §6),
-     puis montée en volume sous warm-up.
-  c) Cron/systemd-timer du daily run + alerting simple (le coupe-circuit logge mais
-     ne notifie pas).
-  d) Personnalisation prénom : table contacts a 'nom', template attend 'prenom',
-     jamais peuplé → splitter nom→prénom dans drafts (engagement + anti-spam). [C1]
-  e) Re-lint des corps stockés au moment de l'envoi (si .env change après génération). [B5]
+CHANTIERS DE RAFFINEMENT (l'outil tourne déjà sans ; par valeur) :
+  a) Micro-lot test 20-30 contacts en réel après gate GO (PREMORTEM.md §6).
+  b) Délivrabilité avancée : jitter d'envoi + throttle par domaine destinataire,
+     seed-list de monitoring inbox/spam.
+  c) Scoring d'engagement (ouvreurs-non-cliqueurs vs silencieux) pour prioriser.
+  d) Dashboard : ajouter la vue funnel RDV + l'A/B objet.
+  e) Alerting sur coupe-circuit bounce (aujourd'hui loggé, pas notifié).
 
 DETTES TECHNIQUES (non bloquantes) :
-  - plan_sequence O(contacts×horizon) : OK à 5k, revoir si ×10 (executemany,
-    index events(type, created_at)).
-  - _stopped_contacts et auto_day_index scannent events sans index sur type.
-  - inbox._known_email : un DSN forgé peut supprimer un contact (fail-safe assumé,
-    documenté — voir Retour sécurité du 2026-06-10).
+  - plan_sequence O(contacts×horizon) : OK à 5k, revoir si ×10 (executemany, index
+    events(type, created_at)).
+  - first_name : heuristique « NOM en capitales = prénom ailleurs » ; cas tout-capitales
+    = best effort (1er token). Conservateur : préfère '' à un mauvais prénom.
+  - bounce ambigu = traité HARD par défaut (réputation prime) ; soft seulement si
+    marqueur temporaire explicite. Escalade après 3 soft.
+  - calendly/_default_fetch et inbox/imap : réseau non testé (logique testée via fetcher
+    injecté). DSN forgé peut suppr. un contact (fail-safe assumé).
 
 VÉRIF INITIALE : git status && git log --oneline -5
   puis pip install -r requirements.txt && python -m pytest -q && ruff check src tests
-LECTURES : PREMORTEM.md (gate Go/No-Go §6) · ROADMAP.md (acquis opérationnels) ·
-  GUIDE = README.md.
+DÉMO END-TO-END (reproductible) : voir le bloc « démo » de l'historique ou DEPLOY.md.
+LECTURES : DEPLOY.md (mise en prod) · PREMORTEM.md (gate §6) · ROADMAP.md · README.md.
 
-QUESTION D'OUVERTURE — choisis une porte avant de coder :
-  a) Câbler le RDV Calendly → event 'rdv' (fermer le funnel).
-  b) Préparer le micro-lot test (checklist gate + script de vérification pré-envoi
-     automatisé : .env complet, DNS, opt-out cliquable, suppression à jour).
-  c) Cron + alerting du daily run.
-  d) Personnalisation prénom (C1).
-Si je réponds « go » : prendre (b) puis (a), hypothèses explicites, zéro question.
+QUESTION D'OUVERTURE — l'outil fait déjà le travail prévu. Choisir :
+  a) Accompagner le 1ᵉʳ lancement réel (gate + micro-lot) quand B2/A5/.env sont prêts.
+  b) Délivrabilité avancée (jitter, throttle/domaine, seed-list).
+  c) Scoring d'engagement + dashboard RDV/A/B.
+Si je réponds « go » : (a) si la config est prête, sinon (b). Hypothèses explicites.
 ```
 
 ---
 
 ## Rappels de méthode (CLAUDE.md, inchangés)
 - Travail substantiel = Template A avant de coder ; `ok S{n}` valide un bloc ; `go` = stop questions.
-- TEST POV (1 adversaire) sur tout livrable tiers. Pre-mortem avant tout lancement → **fait**, voir `PREMORTEM.md`.
+- TEST POV (1 adversaire) sur tout livrable tiers. Pre-mortem avant lancement → fait (`PREMORTEM.md`).
 - Fin de livraison code = bloc 🔒 Retour sécurité + ⚡ Retour optimisation.
 - Fin de session = nettoyage code mort + audit sécu + mise à jour de ce fichier.

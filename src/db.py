@@ -175,6 +175,41 @@ def import_segments(
     return result
 
 
+def purge_hygiene(conn: sqlite3.Connection) -> dict[str, int]:
+    """Met en suppression les adresses rôle (contact@, info@…) et jetables.
+
+    Hygiène cold email : ces adresses génèrent plaintes/bounces et n'apportent pas
+    de RDV. On les blackliste (reason `hygiene`), on annule leurs touches en attente
+    et on passe le contact en `excluded`. Idempotent.
+    """
+    init_db(conn)
+    now = _now()
+    suppressed = 0
+    rows = conn.execute(
+        "SELECT id, email FROM contacts WHERE email NOT IN (SELECT email FROM suppressions)"
+    ).fetchall()
+    for row in rows:
+        email = row["email"]
+        if not (C.is_role_email(email) or C.is_disposable_email(email)):
+            continue
+        conn.execute(
+            "INSERT INTO suppressions (email, reason, created_at) VALUES (?, 'hygiene', ?) "
+            "ON CONFLICT(email) DO NOTHING",
+            (email, now),
+        )
+        conn.execute(
+            "UPDATE messages SET status='cancelled' "
+            "WHERE contact_id=? AND status IN ('draft','scheduled')",
+            (row["id"],),
+        )
+        conn.execute("UPDATE contacts SET status='excluded', updated_at=? WHERE id=?", (now, row["id"]))
+        suppressed += 1
+    conn.commit()
+    result = {"suppressed": suppressed}
+    logger.info("purge hygiène", extra={"context": result})
+    return result
+
+
 def counts_by_segment(conn: sqlite3.Connection) -> dict[str, int]:
     cur = conn.execute(
         "SELECT segment, COUNT(*) AS c FROM contacts GROUP BY segment ORDER BY c DESC"
@@ -191,6 +226,7 @@ def main(argv: list[str] | None = None) -> int:
     p_import.add_argument("segments_dir", help="Dossier des segments (ex: out/segments).")
     p_import.add_argument("--all", action="store_true", help="Inclure aussi le segment EXCLU.")
     sub.add_parser("stats", help="Affiche les comptes par segment.")
+    sub.add_parser("hygiene", help="Blackliste les adresses rôle/jetable (hygiène cold email).")
     args = parser.parse_args(argv)
 
     conn = connect(args.db)
@@ -211,6 +247,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Contacts en base : {total}")  # noqa: T201
             for seg, c in counts.items():
                 print(f"  {seg:24}: {c}")  # noqa: T201
+        elif args.cmd == "hygiene":
+            r = purge_hygiene(conn)
+            print(f"Hygiène — {r['suppressed']} adresse(s) rôle/jetable blacklistée(s).")  # noqa: T201
     finally:
         conn.close()
     return 0

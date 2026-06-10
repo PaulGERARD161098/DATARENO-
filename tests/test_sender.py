@@ -267,3 +267,20 @@ def test_smtp_config_missing_detecte_les_trous():
     assert "SMTP_PASSWORD" in missing
     assert "SENDER_EMAIL/SENDING_DOMAIN" in missing
     assert "SMTP_USER" not in missing
+
+
+def test_relint_bloque_un_claim_glisse_apres_generation(tmp_path: Path):
+    """B5 : un corps devenu non conforme (claim) n'est jamais envoyé."""
+    conn = _seed(tmp_path, 2)
+    # On corrompt un message : un claim interdit a « glissé » après génération.
+    conn.execute("UPDATE messages SET body='Votre PAC à 1€ !' WHERE contact_id=1")
+    conn.commit()
+    sent: list[str] = []
+    r = sender.send_due(
+        conn, D, transport=lambda e, s, b: sent.append(e) or True,
+        confirm=True, caps=(10, 10, 10),
+    )
+    assert r["blocked_claim"] == 1
+    assert r["sent"] == 1  # seul le message sain part
+    assert sent == ["c1@b.fr"]
+    conn.close()
