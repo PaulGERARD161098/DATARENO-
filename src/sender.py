@@ -33,7 +33,7 @@ from . import db as _db
 from . import replies as _replies
 from .logging_setup import get_logger
 from .sequence import cap_for_day, warmup_caps
-from .templates import MessageContext, unfilled_placeholders
+from .templates import MessageContext, lint_claims, unfilled_placeholders
 
 logger = get_logger("datareno.sender")
 
@@ -117,15 +117,25 @@ def send_due(
     remaining = max(0, cap - _sent_today(conn, on_date))
 
     due = due_messages(conn, on_date)
-    # Garde-fou B1 : jamais d'envoi d'un corps contenant un placeholder « [..] » non
-    # renseigné (opt-out / CTA morts). On les écarte avant toute tentative d'envoi.
-    sendable = [row for row in due if not unfilled_placeholders(row["body"])]
-    blocked_placeholder = len(due) - len(sendable)
+    # Garde-fous à l'envoi (derniers filets, juste avant que ça parte) :
+    #  B1 — jamais de placeholder « [..] » non renseigné (opt-out / CTA morts) ;
+    #  B5 — re-lint des claims : un corps édité après génération ne contourne pas la DGCCRF.
+    sendable: list[sqlite3.Row] = []
+    blocked_placeholder = 0
+    blocked_claim = 0
+    for row in due:
+        if unfilled_placeholders(row["body"]):
+            blocked_placeholder += 1
+        elif lint_claims(f"{row['subject']}\n{row['body']}"):
+            blocked_claim += 1
+        else:
+            sendable.append(row)
     dry_run = not (confirm and transport is not None)
 
     result = {"due": len(due), "cap": cap, "day_index": day_index,
               "remaining_cap": remaining, "sent": 0, "failed": 0, "skipped_cap": 0,
-              "blocked_placeholder": blocked_placeholder, "dry_run": int(dry_run)}
+              "blocked_placeholder": blocked_placeholder, "blocked_claim": blocked_claim,
+              "dry_run": int(dry_run)}
 
     if dry_run:
         result["would_send"] = min(len(sendable), remaining)

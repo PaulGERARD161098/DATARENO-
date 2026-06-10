@@ -33,6 +33,24 @@ def _seed_segments(tmp_path: Path) -> Path:
     return seg
 
 
+def test_purge_hygiene_blackliste_role_et_jetable(tmp_path: Path):
+    conn = db.connect(tmp_path / "s.sqlite")
+    db.init_db(conn)
+    now = db._now()
+    for email in ("jean@gmail.com", "contact@boite.fr", "x@yopmail.com"):
+        conn.execute(
+            "INSERT INTO contacts (email, segment, status, created_at, updated_at) "
+            "VALUES (?, 'AIR_EAU', 'new', ?, ?)", (email, now, now),
+        )
+    conn.commit()
+    r = db.purge_hygiene(conn)
+    assert r["suppressed"] == 2  # contact@ (rôle) + yopmail (jetable)
+    sup = {row["email"] for row in conn.execute("SELECT email FROM suppressions")}
+    assert sup == {"contact@boite.fr", "x@yopmail.com"}
+    assert not db.purge_hygiene(conn)["suppressed"]  # idempotent
+    conn.close()
+
+
 def test_init_cree_les_tables(tmp_path: Path):
     conn = db.connect(tmp_path / "s.sqlite")
     db.init_db(conn)

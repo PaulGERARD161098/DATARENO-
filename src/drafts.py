@@ -54,7 +54,7 @@ def generate_drafts(
 
     placeholders = ",".join("?" for _ in segments)
     query = (
-        f"SELECT id, segment, dept FROM contacts WHERE segment IN ({placeholders}) ORDER BY id"
+        f"SELECT id, segment, dept, nom FROM contacts WHERE segment IN ({placeholders}) ORDER BY id"
     )
     rows = conn.execute(query, segments).fetchall()
     if limit is not None:
@@ -65,7 +65,9 @@ def generate_drafts(
     for r in rows:
         # A/B objet : bras stable par contact (toutes ses touches dans le même bras).
         ab = assign_ab(str(r["id"]))
-        subject, body = render(r["segment"], position, {"dept": r["dept"] or ""}, ctx, variant=ab)
+        # Personnalisation : prénom extrait du nom (vide si incertain → « Bonjour, »).
+        contact = {"dept": r["dept"] or "", "prenom": C.first_name(r["nom"])}
+        subject, body = render(r["segment"], position, contact, ctx, variant=ab)
         violations = validate_message(
             subject, body, calendly_url=ctx.calendly_url, optout_url=ctx.optout_url
         )

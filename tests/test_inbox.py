@@ -28,7 +28,19 @@ def _seed(tmp_path: Path):
 
 def test_classify_bounce_par_daemon():
     kind, _ = inbox.classify_inbound("MAILER-DAEMON@b.fr", "Undeliverable", "...")
-    assert kind == "bounce"
+    assert kind == inbox.KIND_BOUNCE_HARD
+
+
+def test_classify_bounce_soft_si_temporaire():
+    kind, _ = inbox.classify_inbound(
+        "mailer-daemon@b.fr", "Delayed", "mailbox full, will try again (4.2.2)"
+    )
+    assert kind == inbox.KIND_BOUNCE_SOFT
+
+
+def test_classify_auto_reply_ooo():
+    kind, _ = inbox.classify_inbound("c0@b.fr", "Réponse automatique", "Je suis absent, de retour le 12.")
+    assert kind == inbox.KIND_AUTOREPLY
 
 
 def test_classify_reply_interesse():
@@ -58,9 +70,35 @@ def test_ingest_bounce_supprime_le_destinataire_du_corps(tmp_path: Path):
     conn = _seed(tmp_path)
     body = "Mail delivery failed.\nFinal-Recipient: rfc822; c0@b.fr\nAddress not found"
     r = inbox.ingest_inbound(conn, "mailer-daemon@esp.fr", "Delivery Status Notification", body)
-    assert r["ok"] is True and r["kind"] == "bounce"
+    assert r["ok"] is True and r["kind"] == inbox.KIND_BOUNCE_HARD
     assert replies.is_suppressed(conn, "c0@b.fr")
     assert conn.execute("SELECT status FROM contacts WHERE id=1").fetchone()["status"] == "bounced"
+    conn.close()
+
+
+def test_soft_bounce_ne_supprime_pas_puis_escalade(tmp_path: Path):
+    conn = _seed(tmp_path)
+    body = "mailbox full, will try again later (4.2.2) — c0@b.fr"
+    # 2 premiers soft : pas de suppression.
+    for _ in range(2):
+        r = inbox.ingest_inbound(conn, "mailer-daemon@esp.fr", "Delayed", body)
+        assert r["kind"] == inbox.KIND_BOUNCE_SOFT and r["escalated"] is False
+    assert not replies.is_suppressed(conn, "c0@b.fr")
+    # 3e soft → escalade en suppression.
+    r = inbox.ingest_inbound(conn, "mailer-daemon@esp.fr", "Delayed", body)
+    assert r["escalated"] is True
+    assert replies.is_suppressed(conn, "c0@b.fr")
+    conn.close()
+
+
+def test_auto_reply_ne_stoppe_pas_la_sequence(tmp_path: Path):
+    conn = _seed(tmp_path)
+    r = inbox.ingest_inbound(conn, "c0@b.fr", "Absence du bureau", "Je suis en congés jusqu'au 20.")
+    assert r["ok"] is True and r["kind"] == inbox.KIND_AUTOREPLY
+    # La séquence reste programmée (la personne est juste absente).
+    n = conn.execute("SELECT COUNT(*) FROM messages WHERE status='scheduled'").fetchone()[0]
+    assert n == 3
+    assert conn.execute("SELECT COUNT(*) FROM events WHERE type='auto_reply'").fetchone()[0] == 1
     conn.close()
 
 

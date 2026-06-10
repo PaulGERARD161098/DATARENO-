@@ -119,6 +119,27 @@ def test_export_saute_les_placeholders(tmp_path: Path):
     conn.close()
 
 
+def test_draft_personnalise_le_prenom(tmp_path: Path):
+    """Le prénom extrait du nom apparaît dans l'accroche ; sinon « Bonjour, »."""
+    conn = db.connect(tmp_path / "s.sqlite")
+    db.init_db(conn)
+    now = db._now()
+    conn.execute(
+        "INSERT INTO contacts (email, nom, segment, status, created_at, updated_at) "
+        "VALUES ('jean@b.fr', 'DUPONT Jean', 'AIR_EAU', 'new', ?, ?)", (now, now),
+    )
+    conn.execute(
+        "INSERT INTO contacts (email, nom, segment, status, created_at, updated_at) "
+        "VALUES ('x@b.fr', '', 'AIR_EAU', 'new', ?, ?)", (now, now),
+    )
+    drafts.generate_drafts(conn, ctx=REAL_CTX, position="J0")
+    jean = conn.execute("SELECT body FROM messages WHERE contact_id=1").fetchone()["body"]
+    sans = conn.execute("SELECT body FROM messages WHERE contact_id=2").fetchone()["body"]
+    assert jean.startswith("Bonjour Jean,")
+    assert sans.startswith("Bonjour,")
+    conn.close()
+
+
 def test_drafts_portent_un_bras_ab(tmp_path: Path):
     """A/B : chaque draft encode un bras A ou B dans `variant`, stable par contact."""
     from src.templates import SUBJECT_VARIANTS, assign_ab
