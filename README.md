@@ -26,12 +26,19 @@ avec **clic humain pour envoyer/booker**. Autonome (SQLite local), hors stack R�
    python -m src.sequence --db out/state.sqlite simulate --days 7
    # 5. Envoi — DRY-RUN par défaut ; envoi réel = --confirm + transport
    python -m src.sender --db out/state.sqlite send                      # simulation
-   python -m src.sender --db out/state.sqlite send --confirm --export-dir out/outbox
-   # 6. Ingestion d'un retour (webhook/IMAP côté infra)
-   python -m src.sender --db out/state.sqlite ingest <email> bounce
-   # 7. Réponses (l'humain valide la classe proposée)
+   python -m src.sender --db out/state.sqlite send --confirm --export-dir out/outbox  # export .eml
+   python -m src.sender --db out/state.sqlite send --confirm --smtp     # SMTP du domaine dédié (.env)
+   # 6. Ingestion des retours
+   python -m src.inbox  --db out/state.sqlite poll                      # poll IMAP (bounces/réponses)
+   python -m src.sender --db out/state.sqlite ingest <email> bounce     # ingestion manuelle d'un retour
+   # 7. Geste quotidien tout-en-un : ingérer les retours PUIS envoyer le dû
+   python -m src.daily  --db out/state.sqlite run                       # simulation
+   python -m src.daily  --db out/state.sqlite run --confirm --smtp      # ingestion + envoi réels
+   # 8. Réponses (l'humain valide la classe proposée par le poll/la classification)
    python -m src.replies --db out/state.sqlite apply <contact_id> STOP
-   # 8. Reporting & A/B + dashboard
+   # 9. Remise en file des « recontacter à 3 mois » échus (+ replanification)
+   python -m src.recontact --db out/state.sqlite requeue --and-plan
+   # 10. Reporting & A/B objet + dashboard
    python -m src.report --db out/state.sqlite
    python -m src.dashboard out/dashboard.html --db out/state.sqlite
    ```

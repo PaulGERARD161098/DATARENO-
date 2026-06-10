@@ -16,8 +16,16 @@ l'extérieur (webhook ESP ou poll IMAP — câblage = infra, hors de ce module).
 from __future__ import annotations
 
 import argparse
+import os
+import re
+import smtplib
 import sqlite3
+import ssl
+from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from datetime import date
+from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 from pathlib import Path
 from typing import Callable
 
@@ -25,11 +33,22 @@ from . import db as _db
 from . import replies as _replies
 from .logging_setup import get_logger
 from .sequence import cap_for_day, warmup_caps
+from .templates import MessageContext, unfilled_placeholders
 
 logger = get_logger("datareno.sender")
 
 # Un transport prend (email, subject, body) et renvoie True si l'envoi a réussi.
 Transport = Callable[[str, str, str], bool]
+
+# Coupe-circuit bounce-rate (A4) : ne s'active qu'au-delà de cet échantillon d'envois.
+BOUNCE_MIN_SAMPLE = 50
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, "").strip() or default)
+    except ValueError:
+        return default
 
 
 def due_messages(conn: sqlite3.Connection, on_date: date) -> list[sqlite3.Row]:
@@ -53,6 +72,26 @@ def _sent_today(conn: sqlite3.Connection, on_date: date) -> int:
     ).fetchone()[0]
 
 
+def auto_day_index(conn: sqlite3.Connection, on_date: date) -> int:
+    """Position warm-up = nombre de jours DISTINCTS déjà envoyés avant `on_date`.
+
+    Défensif (A1) : remplace le `day_index` codé en dur. Si l'envoi passe par l'ESP
+    (aucun event `sent` écrit), reste à 0 → plafond bas 30/j, jamais le plateau 100.
+    """
+    return conn.execute(
+        "SELECT COUNT(DISTINCT substr(created_at,1,10)) FROM events "
+        "WHERE type='sent' AND substr(created_at,1,10) < ?",
+        (on_date.isoformat(),),
+    ).fetchone()[0]
+
+
+def bounce_stats(conn: sqlite3.Connection) -> tuple[int, int, float]:
+    """(envois, bounces, taux) sur tout l'historique d'envoi connu du tool."""
+    sent = conn.execute("SELECT COUNT(*) FROM events WHERE type='sent'").fetchone()[0]
+    bounced = conn.execute("SELECT COUNT(*) FROM events WHERE type='bounce'").fetchone()[0]
+    return sent, bounced, (bounced / sent if sent else 0.0)
+
+
 def send_due(
     conn: sqlite3.Connection,
     on_date: date | None = None,
@@ -60,31 +99,52 @@ def send_due(
     *,
     confirm: bool = False,
     caps: tuple[int, int, int] | None = None,
-    day_index: int = 2,
+    day_index: int | None = None,
+    bounce_limit: float | None = None,
+    bounce_min_sample: int = BOUNCE_MIN_SAMPLE,
 ) -> dict[str, int]:
     """Envoie les messages dus (si confirm + transport), sinon simule (dry-run).
 
-    `day_index` situe `on_date` dans le warm-up (0 = J1). Par défaut 2 (plateau).
+    `day_index` situe `on_date` dans le warm-up (0 = J1). Par défaut **auto** (A1) :
+    déduit du nombre de jours déjà envoyés (cf. `auto_day_index`). Un entier explicite
+    force la valeur (override de test / rattrapage manuel).
     """
     on_date = on_date or date.today()
     caps = caps or warmup_caps()
+    if day_index is None:
+        day_index = auto_day_index(conn, on_date)
     cap = cap_for_day(day_index, caps)
     remaining = max(0, cap - _sent_today(conn, on_date))
 
     due = due_messages(conn, on_date)
+    # Garde-fou B1 : jamais d'envoi d'un corps contenant un placeholder « [..] » non
+    # renseigné (opt-out / CTA morts). On les écarte avant toute tentative d'envoi.
+    sendable = [row for row in due if not unfilled_placeholders(row["body"])]
+    blocked_placeholder = len(due) - len(sendable)
     dry_run = not (confirm and transport is not None)
 
-    result = {"due": len(due), "cap": cap, "remaining_cap": remaining,
-              "sent": 0, "failed": 0, "skipped_cap": 0, "dry_run": int(dry_run)}
+    result = {"due": len(due), "cap": cap, "day_index": day_index,
+              "remaining_cap": remaining, "sent": 0, "failed": 0, "skipped_cap": 0,
+              "blocked_placeholder": blocked_placeholder, "dry_run": int(dry_run)}
 
     if dry_run:
-        result["would_send"] = min(len(due), remaining)
+        result["would_send"] = min(len(sendable), remaining)
         logger.info("send dry-run", extra={"context": result})
         return result
 
-    for row in due:
+    # Coupe-circuit A4 : bounce-rate trop élevé → on stoppe tout envoi (domaine en danger).
+    if bounce_limit is None:
+        bounce_limit = _env_float("BOUNCE_RATE_LIMIT", 0.05)
+    sent_total, _bounced, rate = bounce_stats(conn)
+    if sent_total >= bounce_min_sample and rate > bounce_limit:
+        result["circuit_breaker"] = "bounce_rate"
+        result["bounce_rate"] = round(rate, 4)
+        logger.warning("coupe-circuit bounce-rate", extra={"context": result})
+        return result
+
+    for row in sendable:
         if result["sent"] >= remaining:
-            result["skipped_cap"] = len(due) - result["sent"]
+            result["skipped_cap"] = len(sendable) - result["sent"]
             break
         ok = False
         try:
@@ -110,6 +170,15 @@ def send_due(
     return result
 
 
+# Anti header-injection : un CR/LF dans une valeur d'en-tête permettrait d'injecter
+# des en-têtes arbitraires (Bcc…). EmailMessage refuse déjà ; on neutralise partout.
+_HEADER_UNSAFE = re.compile(r"[\r\n]+")
+
+
+def _safe_header(value: str) -> str:
+    return _HEADER_UNSAFE.sub(" ", value or "").strip()
+
+
 def export_transport(outdir: str | Path) -> Transport:
     """Transport « export » : écrit un .eml par message (l'humain envoie via l'ESP)."""
     out = Path(outdir)
@@ -120,9 +189,118 @@ def export_transport(outdir: str | Path) -> Transport:
         counter["i"] += 1
         path = out / f"{counter['i']:06d}.eml"
         path.write_text(
-            f"To: {email}\nSubject: {subject}\n\n{body}\n", encoding="utf-8"
+            f"To: {_safe_header(email)}\nSubject: {_safe_header(subject)}\n\n{body}\n",
+            encoding="utf-8",
         )
         return True
+
+    return _send
+
+
+# --- Transport SMTP réel (domaine dédié) -----------------------------------
+@dataclass
+class SmtpConfig:
+    """Paramètres SMTP du domaine dédié (jamais en dur : .env uniquement)."""
+    host: str
+    user: str
+    password: str
+    from_email: str
+    port: int = 587
+    starttls: bool = True
+    unsubscribe_mailto: str | None = None
+    timeout: float = 30.0
+
+    @classmethod
+    def from_env(cls) -> "SmtpConfig":
+        domain = os.getenv("SENDING_DOMAIN", "").strip()
+        from_email = os.getenv("SENDER_EMAIL", "").strip() or (f"contact@{domain}" if domain else "")
+        unsub = os.getenv("UNSUBSCRIBE_MAILTO", "").strip() or (
+            f"unsubscribe@{domain}" if domain else None
+        )
+        return cls(
+            host=os.getenv("SMTP_HOST", "").strip(),
+            user=os.getenv("SMTP_USER", "").strip(),
+            password=os.getenv("SMTP_PASSWORD", "").strip(),
+            from_email=from_email,
+            port=int(os.getenv("SMTP_PORT", "").strip() or 587),
+            starttls=(os.getenv("SMTP_STARTTLS", "true").strip().lower() != "false"),
+            unsubscribe_mailto=unsub,
+        )
+
+    def missing(self) -> list[str]:
+        """Champs requis non renseignés (refus d'envoi tant que non vide)."""
+        return [name for name, val in (
+            ("SMTP_HOST", self.host), ("SMTP_USER", self.user),
+            ("SMTP_PASSWORD", self.password), ("SENDER_EMAIL/SENDING_DOMAIN", self.from_email),
+        ) if not val]
+
+
+def build_mime(
+    to_email: str, subject: str, body: str, *,
+    from_email: str, sender_name: str, optout_url: str,
+    unsubscribe_mailto: str | None = None, domain: str | None = None,
+) -> EmailMessage:
+    """Construit un email texte conforme délivrabilité + RGPD (List-Unsubscribe)."""
+    msg = EmailMessage()
+    sender_name = _safe_header(sender_name)
+    from_email = _safe_header(from_email)
+    msg["From"] = f"{sender_name} <{from_email}>" if sender_name else from_email
+    msg["To"] = _safe_header(to_email)
+    msg["Subject"] = _safe_header(subject)
+    msg["Reply-To"] = from_email
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain=domain or (from_email.split("@")[-1] or None))
+    # Opt-out 1-clic : améliore la délivrabilité et matérialise le droit RGPD.
+    targets = []
+    if unsubscribe_mailto:
+        targets.append(f"<mailto:{unsubscribe_mailto}?subject=unsubscribe>")
+    if optout_url.startswith("https://"):
+        targets.append(f"<{optout_url}>")
+    if targets:
+        msg["List-Unsubscribe"] = ", ".join(targets)
+        msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+    msg.set_content(body)
+    return msg
+
+
+# Un connecteur ouvre une session SMTP prête à `send_message` (context manager).
+SmtpConnector = Callable[[SmtpConfig], AbstractContextManager]
+
+
+def _default_smtp_connect(cfg: SmtpConfig) -> smtplib.SMTP:
+    """Ouvre une session SMTP réelle (STARTTLS par défaut), authentifiée, avec timeout.
+
+    Contexte TLS explicite : sans lui, smtplib (Py 3.11) n'effectue PAS la
+    vérification du certificat serveur → identifiants exposés à un MITM.
+    """
+    tls = ssl.create_default_context()
+    if cfg.starttls:
+        smtp = smtplib.SMTP(cfg.host, cfg.port, timeout=cfg.timeout)
+        smtp.starttls(context=tls)
+    else:  # port 465 : TLS implicite
+        smtp = smtplib.SMTP_SSL(cfg.host, cfg.port, timeout=cfg.timeout, context=tls)
+    smtp.login(cfg.user, cfg.password)
+    return smtp
+
+
+def smtp_transport(
+    cfg: SmtpConfig, ctx: MessageContext, *, connector: SmtpConnector | None = None
+) -> Transport:
+    """Transport SMTP réel. `connector` injectable (test sans réseau)."""
+    connector = connector or _default_smtp_connect
+
+    def _send(email: str, subject: str, body: str) -> bool:
+        msg = build_mime(
+            email, subject, body, from_email=cfg.from_email, sender_name=ctx.sender_name,
+            optout_url=ctx.optout_url, unsubscribe_mailto=cfg.unsubscribe_mailto,
+        )
+        try:
+            with connector(cfg) as smtp:
+                smtp.send_message(msg)
+            return True
+        except Exception:  # noqa: BLE001 — un échec d'envoi ne tue pas le batch
+            logger.warning("échec SMTP")  # aucune PII (pas d'email en log)
+            return False
 
     return _send
 
@@ -159,8 +337,12 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("send", help="Envoie les messages dus (dry-run sauf --confirm).")
     s.add_argument("--confirm", action="store_true", help="Envoi réel (sinon simulation).")
-    s.add_argument("--export-dir", default=None, help="Mode export .eml vers ce dossier.")
-    s.add_argument("--day-index", type=int, default=2, help="Position warm-up (0=J1).")
+    transport_grp = s.add_mutually_exclusive_group()
+    transport_grp.add_argument("--export-dir", default=None, help="Mode export .eml vers ce dossier.")
+    transport_grp.add_argument("--smtp", action="store_true",
+                               help="Transport SMTP réel du domaine dédié (config .env).")
+    s.add_argument("--day-index", type=int, default=None,
+                   help="Position warm-up (0=J1). Défaut: auto (déduit des envois passés).")
     i = sub.add_parser("ingest", help="Enregistre un retour externe.")
     i.add_argument("email")
     i.add_argument("type", choices=("open", "reply", "bounce", "optout", "click"))
@@ -171,18 +353,36 @@ def main(argv: list[str] | None = None) -> int:
     conn = _db.connect(args.db)
     try:
         if args.cmd == "send":
-            transport = export_transport(args.export_dir) if args.export_dir else None
+            if args.smtp:
+                cfg = SmtpConfig.from_env()
+                missing = cfg.missing()
+                if missing and args.confirm:
+                    print(f"⛔ SMTP non configuré : {', '.join(missing)}. Aucun envoi.")  # noqa: T201
+                    return 2
+                transport = smtp_transport(cfg, MessageContext.from_env())
+            elif args.export_dir:
+                transport = export_transport(args.export_dir)
+            else:
+                transport = None
             r = send_due(conn, on_date, transport, confirm=args.confirm, day_index=args.day_index)
             if r["dry_run"]:
                 print(  # noqa: T201
                     f"DRY-RUN — dus={r['due']} · enverrait={r.get('would_send', 0)} "
-                    f"(plafond restant {r['remaining_cap']}/{r['cap']}). Aucun envoi.\n"
+                    f"(warm-up J{r['day_index']}, plafond restant {r['remaining_cap']}/{r['cap']}) "
+                    f"· bloqués placeholder={r['blocked_placeholder']}. Aucun envoi.\n"
                     "Ajoutez --confirm + --export-dir (ou un transport SMTP) pour envoyer."
+                )
+            elif r.get("circuit_breaker"):
+                print(  # noqa: T201
+                    f"⛔ ENVOI BLOQUÉ — coupe-circuit {r['circuit_breaker']} "
+                    f"(bounce-rate {r.get('bounce_rate')}). Aucun envoi : vérifiez la qualité de la base."
                 )
             else:
                 print(  # noqa: T201
                     f"ENVOI — envoyés={r['sent']} · échecs={r['failed']} · "
-                    f"non envoyés (plafond)={r['skipped_cap']}"
+                    f"non envoyés (plafond)={r['skipped_cap']} · "
+                    f"bloqués placeholder={r['blocked_placeholder']} · "
+                    f"warm-up J{r['day_index']} (plafond {r['cap']})"
                 )
         elif args.cmd == "ingest":
             r = ingest_event(conn, args.email, args.type, args.payload)

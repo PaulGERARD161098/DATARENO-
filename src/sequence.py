@@ -64,9 +64,22 @@ def cap_for_day(day_index: int, caps: tuple[int, int, int]) -> int:
 
 
 def _stopped_contacts(conn: sqlite3.Connection) -> set[int]:
+    """Contacts arrêtés : un event d'arrêt POSTÉRIEUR à leur dernière remise en file.
+
+    Une remise en file (`recontact`, event `requeue`) réinitialise l'horloge : les
+    arrêts antérieurs (la réponse « recontactez-moi ») ne comptent plus, seuls de
+    nouveaux arrêts ré-excluent le contact.
+    """
     placeholders = ",".join("?" for _ in STOP_EVENTS)
     cur = conn.execute(
-        f"SELECT DISTINCT contact_id FROM events WHERE type IN ({placeholders})", STOP_EVENTS
+        f"""
+        SELECT DISTINCT e.contact_id FROM events e
+        WHERE e.type IN ({placeholders})
+          AND e.created_at >= COALESCE(
+              (SELECT MAX(r.created_at) FROM events r
+               WHERE r.contact_id = e.contact_id AND r.type = 'requeue'), '')
+        """,
+        STOP_EVENTS,
     )
     return {r[0] for r in cur.fetchall()}
 

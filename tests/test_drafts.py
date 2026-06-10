@@ -6,8 +6,17 @@ from pathlib import Path
 
 from src import db
 from src import drafts
+from src import replies
 from src.templates import MessageContext
 from tests.test_db import _seed_segments
+
+# Contexte « réel » (liens https) : un export/envoi exige des liens renseignés (garde-fou B1).
+REAL_CTX = MessageContext(
+    calendly_url="https://calendly.com/expert-cvc/30min",
+    optout_url="https://exemple.fr/desinscription",
+    sender_name="Équipe CVC",
+    reassurance="RGE, décennale",
+)
 
 
 def _db_with_contacts(tmp_path: Path):
@@ -76,7 +85,7 @@ def test_draft_non_conforme_jamais_stocke(tmp_path: Path):
 
 def test_export_mailmerge(tmp_path: Path):
     conn = _db_with_contacts(tmp_path)
-    drafts.generate_drafts(conn, position="J0")
+    drafts.generate_drafts(conn, ctx=REAL_CTX, position="J0")  # liens réels = exportables
     out = tmp_path / "drafts.csv"
     n = drafts.export_mailmerge(conn, out, position="J0")
     assert n == 3
@@ -86,4 +95,41 @@ def test_export_mailmerge(tmp_path: Path):
         assert reader.fieldnames == drafts.EXPORT_FIELDS
     assert len(rows) == 3
     assert all("@" in r["email"] for r in rows)
+    conn.close()
+
+
+def test_export_exclut_les_supprimes(tmp_path: Path):
+    """A3 : le chemin ESP ne doit jamais exporter un contact en liste de suppression."""
+    conn = _db_with_contacts(tmp_path)
+    drafts.generate_drafts(conn, ctx=REAL_CTX, position="J0")
+    email = conn.execute("SELECT email FROM contacts ORDER BY id LIMIT 1").fetchone()["email"]
+    replies.suppress(conn, email, "stop")
+    conn.commit()
+    n = drafts.export_mailmerge(conn, tmp_path / "drafts.csv", position="J0")
+    assert n == 2  # le contact supprimé est écarté
+    conn.close()
+
+
+def test_export_saute_les_placeholders(tmp_path: Path):
+    """B1 : un brouillon avec liens non renseignés (placeholders) n'est jamais exporté."""
+    conn = _db_with_contacts(tmp_path)
+    drafts.generate_drafts(conn, position="J0")  # ctx par défaut = placeholders [..]
+    n = drafts.export_mailmerge(conn, tmp_path / "drafts.csv", position="J0")
+    assert n == 0  # tout est bloqué tant que CALENDLY_URL/OPTOUT_URL ne sont pas réels
+    conn.close()
+
+
+def test_drafts_portent_un_bras_ab(tmp_path: Path):
+    """A/B : chaque draft encode un bras A ou B dans `variant`, stable par contact."""
+    from src.templates import SUBJECT_VARIANTS, assign_ab
+    conn = _db_with_contacts(tmp_path)
+    drafts.generate_drafts(conn, ctx=REAL_CTX, position="J0")
+    for row in conn.execute("SELECT contact_id, variant, subject FROM messages"):
+        ab = row["variant"].rsplit(":", 1)[-1]
+        assert ab in ("A", "B")
+        # Le bras est déterministe (fonction de l'id du contact)…
+        assert ab == assign_ab(str(row["contact_id"]))
+        # …et l'objet correspond bien à la variante du bras.
+        idx = 0 if ab == "A" else 1
+        assert row["subject"] == SUBJECT_VARIANTS["J0"][idx]
     conn.close()
