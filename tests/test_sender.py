@@ -240,6 +240,26 @@ def test_smtp_transport_echec_ne_tue_pas_le_batch(tmp_path: Path):
     conn.close()
 
 
+def test_header_injection_neutralisee():
+    """Un CR/LF dans une valeur d'en-tête ne doit jamais injecter d'en-tête (Bcc…)."""
+    msg = sender.build_mime(
+        "client@b.fr", "Objet\nBcc: pirate@evil.com", "Corps",
+        from_email="contact@dom.fr", sender_name="Eq\r\nuipe", optout_url="https://x.fr/o",
+    )
+    assert "pirate" not in str(msg["Bcc"] or "")
+    assert "\n" not in msg["Subject"] and "\r" not in msg["From"]
+
+
+def test_export_transport_neutralise_les_en_tetes(tmp_path: Path):
+    transport = sender.export_transport(tmp_path / "outbox")
+    transport("a@b.fr\nBcc: pirate@evil.com", "Objet\nX-Evil: 1", "Corps")
+    content = next((tmp_path / "outbox").glob("*.eml")).read_text(encoding="utf-8")
+    header_lines = content.split("\n\n", 1)[0].splitlines()
+    # La charge ne doit jamais devenir un en-tête à part entière (= début de ligne).
+    assert not any(line.startswith(("Bcc:", "X-Evil:")) for line in header_lines)
+    assert [line.split(":")[0] for line in header_lines] == ["To", "Subject"]
+
+
 def test_smtp_config_missing_detecte_les_trous():
     cfg = sender.SmtpConfig(host="", user="u", password="", from_email="")
     missing = cfg.missing()

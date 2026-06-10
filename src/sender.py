@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import smtplib
 import sqlite3
+import ssl
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import date
@@ -168,6 +170,15 @@ def send_due(
     return result
 
 
+# Anti header-injection : un CR/LF dans une valeur d'en-tête permettrait d'injecter
+# des en-têtes arbitraires (Bcc…). EmailMessage refuse déjà ; on neutralise partout.
+_HEADER_UNSAFE = re.compile(r"[\r\n]+")
+
+
+def _safe_header(value: str) -> str:
+    return _HEADER_UNSAFE.sub(" ", value or "").strip()
+
+
 def export_transport(outdir: str | Path) -> Transport:
     """Transport « export » : écrit un .eml par message (l'humain envoie via l'ESP)."""
     out = Path(outdir)
@@ -178,7 +189,8 @@ def export_transport(outdir: str | Path) -> Transport:
         counter["i"] += 1
         path = out / f"{counter['i']:06d}.eml"
         path.write_text(
-            f"To: {email}\nSubject: {subject}\n\n{body}\n", encoding="utf-8"
+            f"To: {_safe_header(email)}\nSubject: {_safe_header(subject)}\n\n{body}\n",
+            encoding="utf-8",
         )
         return True
 
@@ -230,9 +242,11 @@ def build_mime(
 ) -> EmailMessage:
     """Construit un email texte conforme délivrabilité + RGPD (List-Unsubscribe)."""
     msg = EmailMessage()
+    sender_name = _safe_header(sender_name)
+    from_email = _safe_header(from_email)
     msg["From"] = f"{sender_name} <{from_email}>" if sender_name else from_email
-    msg["To"] = to_email
-    msg["Subject"] = subject
+    msg["To"] = _safe_header(to_email)
+    msg["Subject"] = _safe_header(subject)
     msg["Reply-To"] = from_email
     msg["Date"] = formatdate(localtime=True)
     msg["Message-ID"] = make_msgid(domain=domain or (from_email.split("@")[-1] or None))
@@ -254,12 +268,17 @@ SmtpConnector = Callable[[SmtpConfig], AbstractContextManager]
 
 
 def _default_smtp_connect(cfg: SmtpConfig) -> smtplib.SMTP:
-    """Ouvre une session SMTP réelle (STARTTLS par défaut), authentifiée, avec timeout."""
+    """Ouvre une session SMTP réelle (STARTTLS par défaut), authentifiée, avec timeout.
+
+    Contexte TLS explicite : sans lui, smtplib (Py 3.11) n'effectue PAS la
+    vérification du certificat serveur → identifiants exposés à un MITM.
+    """
+    tls = ssl.create_default_context()
     if cfg.starttls:
         smtp = smtplib.SMTP(cfg.host, cfg.port, timeout=cfg.timeout)
-        smtp.starttls()
+        smtp.starttls(context=tls)
     else:  # port 465 : TLS implicite
-        smtp = smtplib.SMTP_SSL(cfg.host, cfg.port, timeout=cfg.timeout)
+        smtp = smtplib.SMTP_SSL(cfg.host, cfg.port, timeout=cfg.timeout, context=tls)
     smtp.login(cfg.user, cfg.password)
     return smtp
 

@@ -72,7 +72,7 @@ Vue état pipeline + file de validation drafts/réponses (lecture SQLite).
   remplir `.env` (SMTP/IMAP + liens + réassurance), automatiser le cron du run quotidien.
 
 ## 🔑 Variables `.env` attendues
-`CALENDLY_URL`, `OPTOUT_URL`, `SENDER_NAME`, `SENDING_DOMAIN`, `DRAFT_MODE`,
+`CALENDLY_URL`, `OPTOUT_URL`, `SENDER_NAME`, `SENDING_DOMAIN`,
 `REASSURANCE_RGE`, `REASSURANCE_DECENNALE`, `REASSURANCE_NB_CHANTIERS`,
 `WARMUP_J1/J2/MAX`, `BOUNCE_RATE_LIMIT`, `DB_PATH`,
 `SMTP_*` / `SENDER_EMAIL` / `UNSUBSCRIBE_MAILTO`, `IMAP_*` (au moment du branchement).

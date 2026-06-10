@@ -118,9 +118,6 @@ SUBJECT_VARIANTS = {
 }
 AB_LABELS = ("A", "B")
 
-# Objet « par défaut » = variante A (utilisé par les appels sans A/B explicite).
-SUBJECTS = {pos: variants[0] for pos, variants in SUBJECT_VARIANTS.items()}
-
 
 def subject_for(position: str, variant: str = "A") -> str:
     """Objet d'une (position, variante A/B). Variante inconnue → A."""

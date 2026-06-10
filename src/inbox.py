@@ -26,6 +26,7 @@ import imaplib
 import os
 import re
 import sqlite3
+import ssl
 from dataclasses import dataclass
 from email.message import Message
 from typing import Callable, Iterator
@@ -149,8 +150,14 @@ def _body_text(msg: Message) -> str:
 
 
 def _default_imap_fetch(cfg: ImapConfig) -> Iterator[tuple[str, str, str]]:
-    """Relève les messages non lus via IMAP (TLS), les marque lus au passage."""
-    client = imaplib.IMAP4_SSL(cfg.host, cfg.port)
+    """Relève les messages non lus via IMAP (TLS vérifié + timeout), marqués lus au passage.
+
+    Contexte TLS explicite : sans lui, imaplib (Py 3.11) ne vérifie PAS le
+    certificat serveur → identifiants exposés à un MITM.
+    """
+    client = imaplib.IMAP4_SSL(
+        cfg.host, cfg.port, ssl_context=ssl.create_default_context(), timeout=30.0
+    )
     try:
         client.login(cfg.user, cfg.password)
         client.select(cfg.folder)
