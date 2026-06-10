@@ -14,6 +14,7 @@ Réassurance + liens restent des placeholders tant qu'ils ne sont pas fournis
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from dataclasses import dataclass
@@ -43,6 +44,18 @@ def lint_claims(text: str) -> list[str]:
     haystack = C.strip_accents(text).lower()
     found = {name for name, pat in FORBIDDEN_PATTERNS if pat.search(haystack)}
     return sorted(found)
+
+
+# Détecteur de placeholders non renseignés ([VOTRE_LIEN_CALENDLY], [LIEN_DESINSCRIPTION]…).
+# Aucun template légitime n'utilise de crochets : tout « [..] » résiduel = champ vide.
+# Garde-fou B1 (pre-mortem) : on refuse d'EXPORTER ou d'ENVOYER un corps qui en contient
+# (opt-out / CTA morts = violation RGPD + funnel cassé), même si le linter de claims passe.
+_PLACEHOLDER_RE = re.compile(r"\[[^\]]+\]")
+
+
+def unfilled_placeholders(text: str) -> list[str]:
+    """Liste triée/unique des placeholders « [..] » encore présents dans le texte."""
+    return sorted(set(_PLACEHOLDER_RE.findall(text)))
 
 
 def validate_message(subject: str, body: str, *, calendly_url: str, optout_url: str) -> list[str]:
@@ -86,11 +99,39 @@ SEGMENT_PITCH = {
     C.SEGMENT_AIR_EAU_A_QUALIFIER: "l'étude d'une pompe à chaleur air-eau adaptée à votre chauffage actuel",
 }
 
-SUBJECTS = {
-    "J0": "On reprend votre projet de chauffage ?",
-    "J4": "Les aides pour votre pompe à chaleur, pendant qu'elles sont ouvertes",
-    "J8": "Dernier message au sujet de votre projet de pompe à chaleur",
+# A/B objet : 2 variantes par position. Variante A = canonique (rétro-compat).
+# Le report compare ensuite les objets réellement envoyés (groupé par subject) :
+# l'humain décide du gagnant, aucune bascule auto (cf. report.recommend_subject).
+SUBJECT_VARIANTS = {
+    "J0": [
+        "On reprend votre projet de chauffage ?",
+        "Et si on relançait votre projet de chauffage ?",
+    ],
+    "J4": [
+        "Les aides pour votre pompe à chaleur, pendant qu'elles sont ouvertes",
+        "Pompe à chaleur : vérifions votre éligibilité aux aides",
+    ],
+    "J8": [
+        "Dernier message au sujet de votre projet de pompe à chaleur",
+        "On clôt votre projet de pompe à chaleur ?",
+    ],
 }
+AB_LABELS = ("A", "B")
+
+
+def subject_for(position: str, variant: str = "A") -> str:
+    """Objet d'une (position, variante A/B). Variante inconnue → A."""
+    if position not in SUBJECT_VARIANTS:
+        raise ValueError(f"Position inconnue : {position}")
+    idx = AB_LABELS.index(variant) if variant in AB_LABELS else 0
+    variants = SUBJECT_VARIANTS[position]
+    return variants[idx % len(variants)]
+
+
+def assign_ab(key: str) -> str:
+    """Assignation A/B déterministe et stable (même contact → même bras)."""
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()
+    return AB_LABELS[int(digest, 16) % len(AB_LABELS)]
 
 _BODY_J0 = """Bonjour{prenom},
 
@@ -145,8 +186,11 @@ def _prenom_fragment(contact: dict[str, str]) -> str:
     return f" {prenom}" if prenom else ""
 
 
-def render(segment: str, position: str, contact: dict[str, str], ctx: MessageContext) -> tuple[str, str]:
-    """Rend (objet, corps) pour un (segment, position) donné. Lève si inconnus."""
+def render(
+    segment: str, position: str, contact: dict[str, str], ctx: MessageContext,
+    variant: str = "A",
+) -> tuple[str, str]:
+    """Rend (objet, corps) pour un (segment, position[, variante A/B]). Lève si inconnus."""
     if segment not in SEGMENT_PITCH:
         raise ValueError(f"Segment inconnu : {segment}")
     if position not in _BODIES:
@@ -161,7 +205,7 @@ def render(segment: str, position: str, contact: dict[str, str], ctx: MessageCon
         reassurance=ctx.reassurance,
         sender=ctx.sender_name,
     )
-    return SUBJECTS[position], body
+    return subject_for(position, variant), body
 
 
 def render_all(ctx: MessageContext | None = None) -> list[dict[str, object]]:
