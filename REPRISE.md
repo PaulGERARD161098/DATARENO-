@@ -11,9 +11,12 @@ Projet : DATA RÉNO Pipeline — cold outreach EMAIL d'une base réno (B2C, 5 20
 vers RDV PAC. Python + SQLite local, autonome. Repo : paggerard-boop/DATARENO-.
 Tout auto SAUF 2 clics humains : envoyer + booker. Conformité DGCCRF/RGPD = cœur.
 
-ÉTAT (v1.1 — l'outil fait le travail prévu + priorisation commerciale ; démo end-to-end) :
-- main à jour (PR #2/#3/#4 mergées ; incrément scoring/dashboard/micro-lot = voir GitHub).
-  163 tests verts, ruff clean. Dév sur claude/datareno-pipeline-setup-km56q4 (repartir de main).
+ÉTAT (v1.2 — outil complet + interface web Vercel ; démo end-to-end) :
+- main à jour (PR #2→#6 mergées). 166 tests verts, ruff clean.
+  Dév sur claude/datareno-pipeline-setup-km56q4 (repartir de main).
+- INTERFACE WEB : web/ (statique, sans build) = tableau de pilotage lecture seule,
+  agrégats SANS PII, alimenté par `python -m src.webexport web/data.json`. Déployable
+  Vercel (cd web && vercel --prod, ou repo Root Dir=web). Voir web/README.md.
 - PIPELINE COMPLET & RUNNABLE :
   tri → db(import+hygiene) → drafts(perso prénom + A/B) → sequence → PREFLIGHT(gate
   Go/No-Go) → daily run(ingestion retours IMAP + RDV Calendly PUIS envoi SMTP, --limit

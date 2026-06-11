@@ -53,6 +53,16 @@ avec **clic humain pour envoyer/booker**. Autonome (SQLite local), hors stack R�
    ```
 4. `TASKS.md` = phases + critères · `ROADMAP.md` = chemin vers l'opérationnel · `SPEC.md` = contrat figé.
 
+## Interface web (Vercel)
+Tableau de pilotage **en lecture seule**, statique, **agrégats sans PII** (funnel, KPIs,
+paliers d'engagement, A/B objet). Le pipeline (SQLite/SMTP/IMAP) reste local ; le web n'en
+est qu'une vue.
+```bash
+python -m src.webexport web/data.json --db out/state.sqlite   # rafraîchir l'instantané
+cd web && vercel --prod                                       # déployer (ou repo → Root Dir = web)
+```
+Détails et confidentialité : `web/README.md`. Actions (envoyer, valider, leads nominatifs) = CLI.
+
 ## Structure
 ```
 CLAUDE.md      méthode + défauts + décisions + garde-fous (chargé par Claude Code)

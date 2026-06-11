@@ -1,0 +1,51 @@
+{
+  "generated_at": "2026-06-11T09:27:59+00:00",
+  "funnel": {
+    "messages_programmes": 0,
+    "messages_envoyes": 0,
+    "contacts_ouverts": 0,
+    "contacts_repondus": 0,
+    "rdv": 0
+  },
+  "kpis": {
+    "taux_ouverture_%": 0.0,
+    "taux_reponse_%": 0.0,
+    "taux_rdv_%": 0.0
+  },
+  "engagement_tiers": [
+    {
+      "tier": "PERDU",
+      "count": 0
+    },
+    {
+      "tier": "EN_FILE",
+      "count": 0
+    },
+    {
+      "tier": "DELIVRE",
+      "count": 0
+    },
+    {
+      "tier": "OUVREUR",
+      "count": 0
+    },
+    {
+      "tier": "CLIQUEUR",
+      "count": 0
+    },
+    {
+      "tier": "REPONDU",
+      "count": 0
+    },
+    {
+      "tier": "RDV",
+      "count": 0
+    }
+  ],
+  "hot_leads_count": 0,
+  "ab_subjects": [],
+  "segments": [],
+  "message_status": [],
+  "suppressions": 0,
+  "due_today": 0
+}

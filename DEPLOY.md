@@ -62,6 +62,13 @@ dû (warm-up auto, suppression, coupe-circuit). Exemple crontab (9h en semaine) 
   `blocked_placeholder`, `blocked_claim`.
 - Suivi commercial : `python -m src.report` (funnel + reco A/B) et
   `python -m src.dashboard out/dashboard.html` (vue HTML locale).
+- **Tableau web (Vercel)** : rafraîchir l'instantané agrégé après le run quotidien et
+  (option repo) le committer pour redéployer :
+  ```bash
+  python -m src.webexport web/data.json --db out/state.sqlite
+  git add web/data.json && git commit -m "maj dashboard" && git push   # Vercel redéploie
+  ```
+  Détails : `web/README.md`.
 
 ## 8. Sauvegarde / reprise
 - Tout l'état est dans `out/state.sqlite` (gitignored). **Sauvegarder ce fichier** (le
