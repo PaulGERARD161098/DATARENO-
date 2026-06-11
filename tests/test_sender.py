@@ -269,6 +269,19 @@ def test_smtp_config_missing_detecte_les_trous():
     assert "SMTP_USER" not in missing
 
 
+def test_limit_micro_lot_plafonne_le_batch(tmp_path: Path):
+    """Mode micro-lot : --limit plafonne les envois sous le plafond warm-up."""
+    conn = _seed(tmp_path, 5)
+    sent: list[str] = []
+    r = sender.send_due(
+        conn, D, transport=lambda e, s, b: sent.append(e) or True,
+        confirm=True, caps=(100, 100, 100), limit=2,
+    )
+    assert r["sent"] == 2
+    assert len(sent) == 2
+    conn.close()
+
+
 def test_relint_bloque_un_claim_glisse_apres_generation(tmp_path: Path):
     """B5 : un corps devenu non conforme (claim) n'est jamais envoyé."""
     conn = _seed(tmp_path, 2)

@@ -42,8 +42,9 @@ avec **clic humain pour envoyer/booker**. Autonome (SQLite local), hors stack R�
    python -m src.replies --db out/state.sqlite apply <contact_id> STOP
    # 9. Remise en file des « recontacter à 3 mois » échus (+ replanification)
    python -m src.recontact --db out/state.sqlite requeue --and-plan
-   # 10. Reporting & A/B objet + dashboard
-   python -m src.report --db out/state.sqlite
+   # 10. Reporting & A/B + scoring d'engagement + dashboard
+   python -m src.report   --db out/state.sqlite
+   python -m src.scoring  --db out/state.sqlite report      # paliers + leads chauds à relancer
    python -m src.dashboard out/dashboard.html --db out/state.sqlite
    ```
    Tests + lint :

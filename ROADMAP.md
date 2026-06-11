@@ -71,10 +71,14 @@ Vue état pipeline + file de validation drafts/réponses (lecture SQLite).
 - **Personnalisation** : prénom extrait du nom dans l'accroche (fallback « Bonjour, »).
 - **Recontact 3 mois** : `src.recontact requeue [--and-plan]` (marqueur `requeue`).
 - **A/B objet** : 2 variantes par position, bras stable par contact ; `src.report` compare.
-- **Déploiement** : `DEPLOY.md` (cron + supervision).
+- **Scoring d'engagement** : `src.scoring report` — paliers froid→chaud + **leads chauds**
+  (cliqueurs sans réponse) à relancer en priorité.
+- **Dashboard enrichi** : funnel, RDV pris, leads chauds, paliers, A/B objet.
+- **Micro-lot** : `src.daily run --limit N` (ou `src.sender send --limit N`) pour le 1ᵉʳ test.
+- **Déploiement & lancement** : `DEPLOY.md` (cron) + `LAUNCH.md` (runbook 1ʳᵉ campagne).
 - Reste **hors code** : **B2** (base légale opt-in, showstopper), **A5** (SPF/DKIM/DMARC),
-  remplir `.env`, brancher le cron. Futurs raffinements : jitter/throttle par domaine,
-  seed-list de délivrabilité, scoring d'engagement.
+  remplir `.env`, brancher le cron. Futurs raffinements : jitter/throttle par domaine
+  destinataire, seed-list de délivrabilité, alerting sur coupe-circuit.
 
 ## 🔑 Variables `.env` attendues
 `CALENDLY_URL`, `OPTOUT_URL`, `SENDER_NAME`, `SENDING_DOMAIN`,

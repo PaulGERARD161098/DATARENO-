@@ -11,13 +11,14 @@ Projet : DATA RÉNO Pipeline — cold outreach EMAIL d'une base réno (B2C, 5 20
 vers RDV PAC. Python + SQLite local, autonome. Repo : paggerard-boop/DATARENO-.
 Tout auto SAUF 2 clics humains : envoyer + booker. Conformité DGCCRF/RGPD = cœur.
 
-ÉTAT (v1.0 — l'outil fait le travail initialement prévu, prouvé en démo end-to-end) :
-- main à jour (PR #2 mergée ; PR de l'incrément v1.0 = voir GitHub). 159 tests verts,
-  ruff clean. Développement sur claude/datareno-pipeline-setup-km56q4 (repartir de main).
+ÉTAT (v1.1 — l'outil fait le travail prévu + priorisation commerciale ; démo end-to-end) :
+- main à jour (PR #2/#3/#4 mergées ; incrément scoring/dashboard/micro-lot = voir GitHub).
+  163 tests verts, ruff clean. Dév sur claude/datareno-pipeline-setup-km56q4 (repartir de main).
 - PIPELINE COMPLET & RUNNABLE :
   tri → db(import+hygiene) → drafts(perso prénom + A/B) → sequence → PREFLIGHT(gate
-  Go/No-Go) → daily run(ingestion retours IMAP + RDV Calendly PUIS envoi SMTP) →
-  report(funnel+A/B) → dashboard. + recontact(remise en file 3 mois).
+  Go/No-Go) → daily run(ingestion retours IMAP + RDV Calendly PUIS envoi SMTP, --limit
+  micro-lot) → report(funnel+A/B) → scoring(paliers + leads chauds) → dashboard.
+  + recontact(remise en file 3 mois). Runbook lancement = LAUNCH.md.
 - GARDE-FOUS : warm-up auto · refus placeholders · re-lint claims à l'envoi · suppression
   partout · coupe-circuit bounce · TLS vérifié SMTP/IMAP · anti header-injection ·
   bounce hard→purge / soft→escalade · auto-reply/OOO ne stoppe pas la séquence ·
@@ -38,12 +39,11 @@ GESTE QUOTIDIEN (cron-ready, voir DEPLOY.md) :
   5. Brancher le cron du run quotidien (DEPLOY.md §6) + sauvegarder out/state.sqlite.
 
 CHANTIERS DE RAFFINEMENT (l'outil tourne déjà sans ; par valeur) :
-  a) Micro-lot test 20-30 contacts en réel après gate GO (PREMORTEM.md §6).
+  a) Micro-lot test 20-30 en réel après gate GO (outillé : daily run --limit ; LAUNCH.md).
   b) Délivrabilité avancée : jitter d'envoi + throttle par domaine destinataire,
      seed-list de monitoring inbox/spam.
-  c) Scoring d'engagement (ouvreurs-non-cliqueurs vs silencieux) pour prioriser.
-  d) Dashboard : ajouter la vue funnel RDV + l'A/B objet.
-  e) Alerting sur coupe-circuit bounce (aujourd'hui loggé, pas notifié).
+  c) Alerting sur coupe-circuit bounce (aujourd'hui loggé, pas notifié).
+  [FAIT cette session : scoring d'engagement + leads chauds + dashboard RDV/A-B + micro-lot.]
 
 DETTES TECHNIQUES (non bloquantes) :
   - plan_sequence O(contacts×horizon) : OK à 5k, revoir si ×10 (executemany, index
