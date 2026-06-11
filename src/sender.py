@@ -102,12 +102,16 @@ def send_due(
     day_index: int | None = None,
     bounce_limit: float | None = None,
     bounce_min_sample: int = BOUNCE_MIN_SAMPLE,
+    limit: int | None = None,
 ) -> dict[str, int]:
     """Envoie les messages dus (si confirm + transport), sinon simule (dry-run).
 
     `day_index` situe `on_date` dans le warm-up (0 = J1). Par défaut **auto** (A1) :
     déduit du nombre de jours déjà envoyés (cf. `auto_day_index`). Un entier explicite
     force la valeur (override de test / rattrapage manuel).
+
+    `limit` plafonne le nombre d'envois de CE batch, sous le plafond warm-up (mode
+    micro-lot : 1ᵉʳ envoi test contrôlé à 20-30 avant la montée en volume).
     """
     on_date = on_date or date.today()
     caps = caps or warmup_caps()
@@ -115,6 +119,8 @@ def send_due(
         day_index = auto_day_index(conn, on_date)
     cap = cap_for_day(day_index, caps)
     remaining = max(0, cap - _sent_today(conn, on_date))
+    if limit is not None:
+        remaining = min(remaining, max(0, limit))
 
     due = due_messages(conn, on_date)
     # Garde-fous à l'envoi (derniers filets, juste avant que ça parte) :
@@ -353,6 +359,8 @@ def main(argv: list[str] | None = None) -> int:
                                help="Transport SMTP réel du domaine dédié (config .env).")
     s.add_argument("--day-index", type=int, default=None,
                    help="Position warm-up (0=J1). Défaut: auto (déduit des envois passés).")
+    s.add_argument("--limit", type=int, default=None,
+                   help="Plafonne ce batch (mode micro-lot : ex. 20 pour le 1ᵉʳ test).")
     i = sub.add_parser("ingest", help="Enregistre un retour externe.")
     i.add_argument("email")
     i.add_argument("type", choices=("open", "reply", "bounce", "optout", "click"))
@@ -374,7 +382,8 @@ def main(argv: list[str] | None = None) -> int:
                 transport = export_transport(args.export_dir)
             else:
                 transport = None
-            r = send_due(conn, on_date, transport, confirm=args.confirm, day_index=args.day_index)
+            r = send_due(conn, on_date, transport, confirm=args.confirm,
+                         day_index=args.day_index, limit=args.limit)
             if r["dry_run"]:
                 print(  # noqa: T201
                     f"DRY-RUN — dus={r['due']} · enverrait={r.get('would_send', 0)} "

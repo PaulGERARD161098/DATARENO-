@@ -72,4 +72,9 @@ def test_dashboard_genere_html(tmp_path: Path):
     html_str = dashboard.build_html(conn, on_date=date(2026, 1, 1))
     assert "<html" in html_str and "DATA RÉNO" in html_str
     assert "Funnel" in html_str
+    # Sections ajoutées (scoring / A-B / RDV).
+    assert "Paliers d'engagement" in html_str
+    assert "A/B objet" in html_str
+    assert "RDV pris" in html_str
+    assert "Leads chauds" in html_str
     conn.close()

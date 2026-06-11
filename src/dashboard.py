@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import db as _db
 from . import report as _report
+from . import scoring as _scoring
 from .sender import due_messages
 
 
@@ -43,10 +44,30 @@ def build_html(conn: sqlite3.Connection, on_date: date | None = None) -> str:
     sup = conn.execute("SELECT COUNT(*) FROM suppressions").fetchone()[0]
     due = due_messages(conn, on_date)
 
+    ab = _report.ab_subjects(conn)
+    tiers = _scoring.tiers_summary(conn)
+    hot = _scoring.hot_leads(conn, limit=50)
+    rdv = _rows(conn, "SELECT id, email FROM contacts WHERE status='rdv' ORDER BY updated_at DESC")
+
     funnel_tbl = _table(["Étape", "Valeur"], [[k, v] for k, v in funnel.items()])
     kpis_tbl = _table(["KPI", "Valeur"], [[k, v] for k, v in kpis.items()])
     seg_tbl = _table(["Segment", "Contacts"], [[r["segment"], r["c"]] for r in segs])
     msg_tbl = _table(["Statut message", "Nombre"], [[r["status"], r["c"]] for r in msg])
+    ab_tbl = _table(
+        ["Objet", "Envoyés", "Ouv. %", "Rép. %"],
+        [[r["subject"], r["sent"], r["taux_ouverture_%"], r["taux_reponse_%"]] for r in ab],
+    ) if ab else "<p class='muted'>Aucun envoi pour l'instant.</p>"
+    tiers_tbl = _table(
+        ["Palier (froid → chaud)", "Contacts"],
+        [[t, tiers[t]] for t in _scoring.TIERS],
+    )
+    hot_tbl = _table(
+        ["contact_id", "email", "dernier clic"],
+        [[h["contact_id"], h["email"], h["dernier_clic"]] for h in hot],
+    ) if hot else "<p class='muted'>Aucun lead chaud pour l'instant.</p>"
+    rdv_tbl = _table(
+        ["contact_id", "email"], [[r["id"], r["email"]] for r in rdv]
+    ) if rdv else "<p class='muted'>Aucun RDV pour l'instant.</p>"
     due_tbl = _table(
         ["contact_id", "objet"],
         [[r["contact_id"], r["subject"]] for r in due[:50]],
@@ -66,6 +87,10 @@ def build_html(conn: sqlite3.Connection, on_date: date | None = None) -> str:
         f"<p class='muted'>Généré le {on_date.isoformat()} · suppressions : {sup}</p>"
         f"<h2>Funnel</h2>{funnel_tbl}"
         f"<h2>KPIs</h2>{kpis_tbl}"
+        f"<h2>RDV pris</h2>{rdv_tbl}"
+        f"<h2>Leads chauds — cliqueurs sans réponse (à relancer)</h2>{hot_tbl}"
+        f"<h2>Paliers d'engagement</h2>{tiers_tbl}"
+        f"<h2>A/B objet</h2>{ab_tbl}"
         f"<h2>Contacts par segment</h2>{seg_tbl}"
         f"<h2>Messages par statut</h2>{msg_tbl}"
         f"<h2>File de validation — drafts dus (max 50)</h2>{due_tbl}"

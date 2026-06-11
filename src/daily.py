@@ -43,6 +43,7 @@ def run_daily(
     calendly_cfg: _calendly.CalendlyConfig | None = None,
     calendly_fetcher: _calendly.Fetcher | None = None,
     day_index: int | None = None,
+    limit: int | None = None,
 ) -> dict[str, object]:
     """Ingère les retours + RDV (si configurés) puis envoie le dû du jour."""
     on_date = on_date or date.today()
@@ -58,7 +59,7 @@ def run_daily(
 
     # 3. Envoi du dû (dry-run si pas de transport/confirm).
     summary["send"] = _sender.send_due(
-        conn, on_date, transport, confirm=confirm, day_index=day_index
+        conn, on_date, transport, confirm=confirm, day_index=day_index, limit=limit
     )
     logger.info("run quotidien", extra={"context": {
         "polled": summary["inbox"] is not None,
@@ -80,6 +81,8 @@ def main(argv: list[str] | None = None) -> int:
     grp.add_argument("--smtp", action="store_true", help="Transport SMTP du domaine dédié (.env).")
     run.add_argument("--no-poll", action="store_true", help="Ne pas relever la boîte IMAP.")
     run.add_argument("--day-index", type=int, default=None, help="Position warm-up (défaut: auto).")
+    run.add_argument("--limit", type=int, default=None,
+                     help="Plafonne l'envoi du jour (mode micro-lot : ex. 20).")
     args = parser.parse_args(argv)
 
     # Transport
@@ -107,7 +110,8 @@ def main(argv: list[str] | None = None) -> int:
     conn = _db.connect(args.db)
     try:
         s = run_daily(conn, transport=transport, confirm=args.confirm,
-                      imap_cfg=imap_cfg, calendly_cfg=calendly_cfg, day_index=args.day_index)
+                      imap_cfg=imap_cfg, calendly_cfg=calendly_cfg,
+                      day_index=args.day_index, limit=args.limit)
         inbox_s = s["inbox"]
         send_s = s["send"]
         if inbox_s is not None:
