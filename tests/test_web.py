@@ -78,6 +78,20 @@ def test_load_env(tmp_path: Path, monkeypatch):
     assert n == 2
 
 
+def test_auth_ok_sans_credentials_laisse_passer():
+    # Pas d'auth configurée → tout passe (localhost pur).
+    assert web.auth_ok(None, "", "") is True
+    assert web.auth_ok("n'importe", "", "") is True
+
+
+def test_auth_ok_exige_le_bon_header():
+    good = web.basic_auth_header("paul", "s3cret")
+    assert web.auth_ok(good, "paul", "s3cret") is True
+    assert web.auth_ok("Basic mauvais", "paul", "s3cret") is False
+    assert web.auth_ok(None, "paul", "s3cret") is False
+    assert web.auth_ok(web.basic_auth_header("paul", "x"), "paul", "s3cret") is False
+
+
 def test_load_env_n_ecrase_pas(tmp_path: Path, monkeypatch):
     env = tmp_path / ".env"
     env.write_text("FOO_Y=fromfile\n", encoding="utf-8")

@@ -16,7 +16,10 @@ CLI :
 from __future__ import annotations
 
 import argparse
+import base64
+import hmac
 import html
+import os
 import sqlite3
 import urllib.parse
 import webbrowser
@@ -51,6 +54,22 @@ _STYLE = (
     ".flash{background:#13351f;border:1px solid #2ecc71;padding:.7rem 1rem;border-radius:10px;margin:.6rem 0}"
     ".go{color:#2ecc71;font-weight:700}.nogo{color:#ff6b4a;font-weight:700}.muted{color:#8b95a7;font-size:.82rem}"
 )
+
+
+def basic_auth_header(user: str, password: str) -> str:
+    """En-tête `Authorization: Basic …` attendu pour (user, password)."""
+    return "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()
+
+
+def auth_ok(authorization: str | None, user: str, password: str) -> bool:
+    """True si la requête est autorisée. Sans user/password configurés → pas d'auth.
+
+    Indispensable dès que le panneau est exposé (tunnel) : protège la PII. Comparaison
+    à temps constant.
+    """
+    if not (user and password):
+        return True
+    return hmac.compare_digest(authorization or "", basic_auth_header(user, password))
 
 
 def _esc(x: object) -> str:
@@ -180,7 +199,7 @@ def action_reply(conn: sqlite3.Connection, contact_id: int, label: str) -> str:
             f"suppression {'oui' if r['suppressed'] else 'non'}.")
 
 
-def _make_handler(db_path: str):
+def _make_handler(db_path: str, user: str = "", password: str = ""):
     class Handler(BaseHTTPRequestHandler):
         def _send_html(self, body: str, code: int = 200) -> None:
             data = body.encode("utf-8")
@@ -190,7 +209,19 @@ def _make_handler(db_path: str):
             self.end_headers()
             self.wfile.write(data)
 
+        def _guard(self) -> bool:
+            """Renvoie False (et émet 401) si l'auth est requise et invalide."""
+            if auth_ok(self.headers.get("Authorization"), user, password):
+                return True
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="DATA RENO"')
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return False
+
         def do_GET(self) -> None:  # noqa: N802
+            if not self._guard():
+                return
             if self.path.split("?")[0] not in ("/", "/index.html"):
                 self._send_html("<p>404</p>", 404)
                 return
@@ -201,6 +232,8 @@ def _make_handler(db_path: str):
                 conn.close()
 
         def do_POST(self) -> None:  # noqa: N802
+            if not self._guard():
+                return
             length = int(self.headers.get("Content-Length", 0))
             form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
             action = form.get("action", [""])[0]
@@ -235,11 +268,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-open", action="store_true", help="Ne pas ouvrir le navigateur.")
     args = parser.parse_args(argv)
 
+    user = os.getenv("WEB_USER", "").strip()
+    password = os.getenv("WEB_PASSWORD", "").strip()
     url = f"http://{args.host}:{args.port}"
-    httpd = ThreadingHTTPServer((args.host, args.port), _make_handler(args.db))
-    print(f"Panneau de pilotage → {url}  (Ctrl+C pour arrêter)")  # noqa: T201
-    if args.host not in ("127.0.0.1", "localhost"):
-        print("⚠️  Hôte non-local : ce panneau expose des données personnelles. À éviter.")  # noqa: T201
+    httpd = ThreadingHTTPServer((args.host, args.port), _make_handler(args.db, user, password))
+    auth_state = "auth ON (Basic)" if (user and password) else "auth OFF"
+    print(f"Panneau de pilotage → {url}  [{auth_state}]  (Ctrl+C pour arrêter)")  # noqa: T201
+    exposed = args.host not in ("127.0.0.1", "localhost")
+    if (exposed or os.getenv("WEB_EXPOSED")) and not (user and password):
+        print("⚠️  Panneau accessible hors localhost SANS auth : définis WEB_USER/WEB_PASSWORD "  # noqa: T201
+              "(données personnelles). Recommandé même derrière un tunnel.")
     if not args.no_open:
         try:
             webbrowser.open(url)
