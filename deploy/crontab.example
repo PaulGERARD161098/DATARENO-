@@ -1,0 +1,12 @@
+# crontab pour l'utilisateur "datareno" (option sans systemd).
+# Édite le chemin si besoin. `set -a; . .env` charge les secrets pour le process.
+# Run quotidien Lun-Ven à 9h : gate -> ingestion+envoi -> export web. Log dans out/daily.log.
+0 9 * * 1-5 cd /opt/datareno && set -a && . ./.env && set +a && \
+  .venv/bin/python -m src.preflight --db out/state.sqlite check && \
+  .venv/bin/python -m src.daily --db out/state.sqlite run --confirm --smtp && \
+  .venv/bin/python -m src.webexport web/data.json --db out/state.sqlite \
+  >> out/daily.log 2>&1
+
+# Remise en file "recontacter à 3 mois" : tous les lundis à 8h.
+0 8 * * 1 cd /opt/datareno && set -a && . ./.env && set +a && \
+  .venv/bin/python -m src.recontact --db out/state.sqlite requeue --and-plan >> out/daily.log 2>&1

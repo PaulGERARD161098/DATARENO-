@@ -1,0 +1,15 @@
+[Unit]
+Description=DATA RENO - run quotidien (gate -> ingestion + envoi -> export web)
+After=network.target
+
+[Service]
+Type=oneshot
+User=datareno
+WorkingDirectory=/opt/datareno
+EnvironmentFile=/opt/datareno/.env
+# La gate doit passer (GO) sinon on n'envoie rien. Puis run réel SMTP, puis export web.
+ExecStart=/opt/datareno/.venv/bin/python -m src.preflight --db out/state.sqlite check
+ExecStart=/opt/datareno/.venv/bin/python -m src.daily --db out/state.sqlite run --confirm --smtp
+ExecStart=/opt/datareno/.venv/bin/python -m src.webexport web/data.json --db out/state.sqlite
+NoNewPrivileges=true
+PrivateTmp=true

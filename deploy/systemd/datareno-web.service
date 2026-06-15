@@ -1,0 +1,19 @@
+[Unit]
+Description=DATA RENO - panneau de pilotage local (localhost uniquement)
+After=network.target
+
+[Service]
+Type=simple
+User=datareno
+WorkingDirectory=/opt/datareno
+EnvironmentFile=/opt/datareno/.env
+ExecStart=/opt/datareno/.venv/bin/python -m src.web --db out/state.sqlite --host 127.0.0.1 --port 8765 --no-open
+Restart=on-failure
+RestartSec=5
+# Durcissement
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,32 @@
+# Lancer depuis deploy/ :  docker compose up -d web
+# Run quotidien (à mettre dans le cron de l'hôte) :  docker compose run --rm daily
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file: ../.env
+    # Publié UNIQUEMENT sur la loopback de l'hôte (PII) → accès via tunnel SSH.
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - ../out:/app/out
+      - ../data:/app/data
+      - ../web:/app/web
+    restart: unless-stopped
+
+  daily:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file: ../.env
+    volumes:
+      - ../out:/app/out
+      - ../data:/app/data
+      - ../web:/app/web
+    # Gate -> ingestion + envoi -> export web. Ne tourne qu'à la demande.
+    command: >
+      sh -c "python -m src.preflight --db out/state.sqlite check &&
+             python -m src.daily --db out/state.sqlite run --confirm --smtp &&
+             python -m src.webexport web/data.json --db out/state.sqlite"
+    restart: "no"

@@ -21,6 +21,10 @@ Tout auto SAUF 2 clics humains : envoyer + booker. Conformité DGCCRF/RGPD = cœ
     web.action_run / web.action_reply (testées sans réseau/socket).
   · DASHBOARD VERCEL (distant, lecture seule, agrégats SANS PII) : web/ + src.webexport,
     déployable (vercel.json racine outputDirectory=web). Voir web/README.md.
+- DÉPLOIEMENT OPÉRATIONNEL : kit deploy/ (config-only, sans changement de code) :
+  install.sh, systemd (datareno-web.service + datareno-daily.timer), crontab.example,
+  Dockerfile + docker-compose.yml. Env fourni par le service (EnvironmentFile/env_file/
+  source .env). Accès panneau à distance = tunnel SSH (jamais d'expo PII). Voir deploy/README.md.
 - PIPELINE COMPLET & RUNNABLE :
   tri → db(import+hygiene) → drafts(perso prénom + A/B) → sequence → PREFLIGHT(gate
   Go/No-Go) → daily run(ingestion retours IMAP + RDV Calendly PUIS envoi SMTP, --limit
