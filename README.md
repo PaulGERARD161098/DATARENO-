@@ -53,15 +53,19 @@ avec **clic humain pour envoyer/booker**. Autonome (SQLite local), hors stack R�
    ```
 4. `TASKS.md` = phases + critères · `ROADMAP.md` = chemin vers l'opérationnel · `SPEC.md` = contrat figé.
 
-## Interface web (Vercel)
-Tableau de pilotage **en lecture seule**, statique, **agrégats sans PII** (funnel, KPIs,
-paliers d'engagement, A/B objet). Le pipeline (SQLite/SMTP/IMAP) reste local ; le web n'en
-est qu'une vue.
+## Interfaces
+**Panneau local (le plus simple au quotidien)** — boutons dans le navigateur, tourne sur
+ta machine donc il **agit** (relever les retours, envoyer la file, valider une réponse,
+voir les leads chauds). Localhost uniquement (PII protégée), `.env` chargé tout seul :
+```bash
+python -m src.web --db out/state.sqlite        # ouvre http://127.0.0.1:8765
+```
+**Dashboard Vercel (coup d'œil distant)** — statique, **lecture seule, agrégats sans PII** :
 ```bash
 python -m src.webexport web/data.json --db out/state.sqlite   # rafraîchir l'instantané
 cd web && vercel --prod                                       # déployer (ou repo → Root Dir = web)
 ```
-Détails et confidentialité : `web/README.md`. Actions (envoyer, valider, leads nominatifs) = CLI.
+Détails/confidentialité : `web/README.md`. Pilotage avancé & cron : CLI (voir ci-dessus).
 
 ## Structure
 ```
