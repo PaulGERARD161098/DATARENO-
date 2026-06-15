@@ -67,6 +67,11 @@ cd web && vercel --prod                                       # déployer (ou re
 ```
 Détails/confidentialité : `web/README.md`. Pilotage avancé & cron : CLI (voir ci-dessus).
 
+## Mettre en production (serveur/VPS)
+Kit prêt à l'emploi dans `deploy/` : installation, **systemd** (panneau + timer quotidien),
+**cron**, **Docker**, accès distant par tunnel SSH (pas d'exposition de PII). Voir
+`deploy/README.md`. C'est ce qui fait tourner les vraies campagnes (Vercel ne le peut pas).
+
 ## Structure
 ```
 CLAUDE.md      méthode + défauts + décisions + garde-fous (chargé par Claude Code)

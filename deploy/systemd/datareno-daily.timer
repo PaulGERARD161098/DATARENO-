@@ -1,0 +1,9 @@
+[Unit]
+Description=DATA RENO - planifie le run quotidien (Lun-Ven 9h00)
+
+[Timer]
+OnCalendar=Mon-Fri 09:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
