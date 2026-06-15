@@ -5,8 +5,10 @@ phases suivantes vivent dans .env (voir .env.example), jamais en dur.
 """
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
+from pathlib import Path
 
 # --- Segments (verrouillés, cf. SPEC.md) ---------------------------------
 SEGMENT_AIR_EAU = "AIR_EAU"
@@ -76,6 +78,29 @@ EMAIL_REGEX = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 
 # Formats de date acceptés en entrée (ordre = priorité d'essai).
 DATE_FORMATS = ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d", "%d.%m.%Y")
+
+
+def load_env(path: str | Path = ".env") -> int:
+    """Charge un fichier `.env` (KEY=VALUE) dans os.environ, sans écraser l'existant.
+
+    Stdlib only (pas de dépendance). Les lignes vides / commentaires (#) sont ignorées ;
+    les guillemets entourant la valeur sont retirés. Retourne le nb de variables posées.
+    """
+    p = Path(path)
+    if not p.exists():
+        return 0
+    posed = 0
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+            posed += 1
+    return posed
 
 
 def strip_accents(value: str) -> str:
