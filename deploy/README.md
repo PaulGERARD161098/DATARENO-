@@ -64,7 +64,10 @@ jamais sur Internet**. Pour y accéder depuis ton poste, tunnel SSH :
 ssh -L 8765:127.0.0.1:8765 datareno@TON_VPS
 # puis ouvre http://127.0.0.1:8765 dans ton navigateur local
 ```
-(Alternative avancée : reverse proxy Caddy/nginx avec **auth + HTTPS** — à toi de sécuriser.)
+**Accès « partout dans le navigateur » (recommandé) :** tunnel **Tailscale** (privé) ou
+**Cloudflare Tunnel** (URL publique), avec l'**auth du panneau** (`WEB_USER`/`WEB_PASSWORD`).
+Guide complet : **`deploy/REMOTE_ACCESS.md`**.
+(Alternative avancée : reverse proxy Caddy/nginx avec auth + HTTPS — à toi de sécuriser.)
 
 ## Sauvegarde & exploitation
 - **Sauvegarder `out/state.sqlite`** (tout l'état y est) : `cp out/state.sqlite backups/…` régulier.

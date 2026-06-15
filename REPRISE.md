@@ -15,10 +15,11 @@ Tout auto SAUF 2 clics humains : envoyer + booker. Conformité DGCCRF/RGPD = cœ
 - main à jour (PR #2→#8 mergées). 172 tests verts, ruff clean.
   Dév sur claude/datareno-pipeline-setup-km56q4 (repartir de main).
 - INTERFACES :
-  · PANNEAU LOCAL (le plus simple) : `python -m src.web` → http://127.0.0.1:8765,
+  · PANNEAU LOCAL / DISTANT (le plus simple) : `python -m src.web` → http://127.0.0.1:8765,
     boutons (relever retours, envoyer la file, valider réponse, leads chauds nominatifs).
-    Stdlib, localhost only (PII protégée), .env auto-chargé (config.load_env). Actions =
-    web.action_run / web.action_reply (testées sans réseau/socket).
+    Stdlib, .env auto-chargé. AUTH Basic optionnelle (WEB_USER/WEB_PASSWORD) → exposable
+    via tunnel (Tailscale/Cloudflare, cf. deploy/REMOTE_ACCESS.md) sans fuite de PII.
+    Actions = web.action_run / web.action_reply ; auth = web.auth_ok (testées sans socket).
   · DASHBOARD VERCEL (distant, lecture seule, agrégats SANS PII) : web/ + src.webexport,
     déployable (vercel.json racine outputDirectory=web). Voir web/README.md.
 - DÉPLOIEMENT OPÉRATIONNEL : kit deploy/ (config-only, sans changement de code) :
