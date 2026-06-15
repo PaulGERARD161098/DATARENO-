@@ -33,10 +33,48 @@ def test_render_panel_contient_les_sections(tmp_path: Path):
     conn = _seed(tmp_path)
     html = web.render_panel(conn, on_date=D)
     assert "panneau de pilotage" in html.lower()
-    assert "Geste du jour" in html
+    assert "À envoyer aujourd'hui" in html
+    assert "Réponses à traiter" in html
     assert "Leads chauds" in html
     assert "A/B objet" in html
     assert "Gate" in html
+    # Le message dû est éditable (objet + corps présents dans le formulaire).
+    assert "Objet" in html and "Corps" in html
+    assert "name='message_id'" in html
+    conn.close()
+
+
+def test_action_message_enregistre_l_edition(tmp_path: Path, monkeypatch):
+    conn = _seed(tmp_path)
+    for k in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "SENDER_EMAIL", "SENDING_DOMAIN"):
+        monkeypatch.delenv(k, raising=False)
+    flash = web.action_message(conn, 1, "Nouvel objet", "Nouveau corps", "save")
+    assert "enregistr" in flash.lower()
+    row = conn.execute("SELECT subject, body, status FROM messages WHERE id=1").fetchone()
+    assert row["subject"] == "Nouvel objet" and row["body"] == "Nouveau corps"
+    assert row["status"] == "scheduled"  # save n'envoie pas
+    conn.close()
+
+
+def test_action_message_send_sans_smtp_simule(tmp_path: Path, monkeypatch):
+    conn = _seed(tmp_path)
+    for k in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "SENDER_EMAIL", "SENDING_DOMAIN"):
+        monkeypatch.delenv(k, raising=False)
+    flash = web.action_message(conn, 1, "Objet", "Corps", "send")
+    assert "imulation" in flash  # Simulation
+    assert conn.execute("SELECT COUNT(*) FROM events WHERE type='sent'").fetchone()[0] == 0
+    conn.close()
+
+
+def test_pending_replies_liste_les_reponses_non_traitees(tmp_path: Path):
+    conn = _seed(tmp_path)
+    # Réponse importée (proposée) mais pas encore validée → doit apparaître.
+    replies.record_reply(conn, 1, replies.INTERESSE)
+    pend = web.pending_replies(conn)
+    assert len(pend) == 1 and pend[0]["proposed"] == replies.INTERESSE
+    # Une fois l'action validée (statut final), elle disparaît de la file.
+    web.action_reply(conn, 1, replies.INTERESSE)
+    assert web.pending_replies(conn) == []
     conn.close()
 
 
