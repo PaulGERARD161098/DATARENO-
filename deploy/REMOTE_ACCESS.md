@@ -4,6 +4,15 @@ But : accéder au **panneau interactif** (`src/web.py`) depuis ton navigateur, p
 **sans exposer la PII**. Le panneau reste sur `127.0.0.1:8765` (VPS ou ta machine) ; un
 **tunnel** fait le pont, et une **auth** protège l'accès.
 
+## ⭐ Le plus simple ET gratuit : depuis ta machine, en une commande
+Pas de VPS, pas de carte bancaire, et la **PII reste chez toi** :
+```bash
+bash deploy/serve_public.sh      # lance le panneau + un tunnel Cloudflare gratuit, imprime l'URL
+```
+Ouvre l'URL `https://….trycloudflare.com` affichée depuis ton téléphone/n'importe quel
+navigateur → connecte-toi (WEB_USER/WEB_PASSWORD). Seule contrepartie du gratuit : l'URL
+ne marche **que tant que ton ordi est allumé** avec la commande lancée. Détails ci-dessous.
+
 ## 0. Activer l'auth du panneau (obligatoire dès qu'on expose)
 Dans `.env` :
 ```
