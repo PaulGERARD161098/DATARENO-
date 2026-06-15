@@ -1,0 +1,22 @@
+# Ne JAMAIS embarquer données, secrets ni état dans l'image (PII / RGPD).
+data/*
+!data/.gitkeep
+out/*
+!out/.gitkeep
+.env
+*.sqlite
+*.sqlite3
+*.db
+
+# Inutile au runtime
+.git
+.github
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+tests/
+*.md

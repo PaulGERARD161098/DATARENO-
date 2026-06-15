@@ -199,6 +199,14 @@ def action_reply(conn: sqlite3.Connection, contact_id: int, label: str) -> str:
             f"suppression {'oui' if r['suppressed'] else 'non'}.")
 
 
+def _open_db(db_path: str):
+    """Ouvre la base et garantit le schéma (idempotent) → une base vide
+    (ex. 1er démarrage sur disque neuf) s'affiche à zéro au lieu de planter."""
+    conn = _db.connect(db_path)
+    _db.init_db(conn)
+    return conn
+
+
 def _make_handler(db_path: str, user: str = "", password: str = ""):
     class Handler(BaseHTTPRequestHandler):
         def _send_html(self, body: str, code: int = 200) -> None:
@@ -220,12 +228,21 @@ def _make_handler(db_path: str, user: str = "", password: str = ""):
             return False
 
         def do_GET(self) -> None:  # noqa: N802
+            # Sonde de santé pour l'hébergeur (PaaS) : 200, sans auth, sans PII.
+            if self.path.split("?")[0] == "/healthz":
+                body = b"ok"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if not self._guard():
                 return
             if self.path.split("?")[0] not in ("/", "/index.html"):
                 self._send_html("<p>404</p>", 404)
                 return
-            conn = _db.connect(db_path)
+            conn = _open_db(db_path)
             try:
                 self._send_html(render_panel(conn))
             finally:
@@ -237,7 +254,7 @@ def _make_handler(db_path: str, user: str = "", password: str = ""):
             length = int(self.headers.get("Content-Length", 0))
             form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
             action = form.get("action", [""])[0]
-            conn = _db.connect(db_path)
+            conn = _open_db(db_path)
             try:
                 if action == "run":
                     limit = form.get("limit", [""])[0].strip()
@@ -262,22 +279,30 @@ def _make_handler(db_path: str, user: str = "", password: str = ""):
 def main(argv: list[str] | None = None) -> int:
     _C.load_env()  # charge .env automatiquement
     parser = argparse.ArgumentParser(description="Panneau de pilotage local (navigateur).")
-    parser.add_argument("--db", default=_db.DEFAULT_DB)
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--db", default=os.getenv("WEB_DB", _db.DEFAULT_DB))
+    # $PORT est injecté par les hébergeurs (Render, Railway, Fly…).
+    parser.add_argument("--port", type=int, default=int(os.getenv("PORT", "8765")))
     parser.add_argument("--host", default="127.0.0.1", help="Défaut localhost (NE PAS exposer : PII).")
     parser.add_argument("--no-open", action="store_true", help="Ne pas ouvrir le navigateur.")
     args = parser.parse_args(argv)
 
     user = os.getenv("WEB_USER", "").strip()
     password = os.getenv("WEB_PASSWORD", "").strip()
+    has_auth = bool(user and password)
+    non_local = args.host not in ("127.0.0.1", "localhost")
+    public = bool(os.getenv("WEB_EXPOSED"))  # signal EXPLICITE « accessible sur Internet » (PaaS)
+    # Public sans auth = fuite de PII → on REFUSE de démarrer (pas un simple avertissement).
+    if public and not has_auth:
+        print("⛔ WEB_EXPOSED=1 (accessible sur Internet) SANS auth : refus de démarrer. "  # noqa: T201
+              "Définis WEB_USER et WEB_PASSWORD (données personnelles).")
+        return 2
+    if non_local and not public and not has_auth:
+        print("⚠️  Bind hors localhost sans auth : à ne publier que sur une loopback "  # noqa: T201
+              "(ex. docker-compose). Pour un accès Internet, mets WEB_EXPOSED=1 + auth.")
     url = f"http://{args.host}:{args.port}"
     httpd = ThreadingHTTPServer((args.host, args.port), _make_handler(args.db, user, password))
     auth_state = "auth ON (Basic)" if (user and password) else "auth OFF"
     print(f"Panneau de pilotage → {url}  [{auth_state}]  (Ctrl+C pour arrêter)")  # noqa: T201
-    exposed = args.host not in ("127.0.0.1", "localhost")
-    if (exposed or os.getenv("WEB_EXPOSED")) and not (user and password):
-        print("⚠️  Panneau accessible hors localhost SANS auth : définis WEB_USER/WEB_PASSWORD "  # noqa: T201
-              "(données personnelles). Recommandé même derrière un tunnel.")
     if not args.no_open:
         try:
             webbrowser.open(url)

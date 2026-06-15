@@ -1,0 +1,42 @@
+# Déploiement du PANNEAU COMPLET (interactif) sur Render — accessible depuis
+# n'importe quel navigateur, via une URL HTTPS, protégée par mot de passe.
+#
+# Mise en service (≈10 min, sans Linux/SSH) :
+#   1. Crée un compte sur https://render.com (connecte ton GitHub).
+#   2. New + → "Blueprint" → choisis ce dépôt → Render lit ce fichier.
+#   3. Renseigne WEB_USER et WEB_PASSWORD quand il les demande (ils ne sont PAS
+#      dans le dépôt : sync:false). Mets un mot de passe long et unique.
+#   4. Apply → tu obtiens une URL https://datareno-panel.onrender.com
+#   5. Ouvre l'URL dans ton navigateur (ordi ou tél) → login → panneau complet.
+#
+# ⚠️ Au 1er démarrage la base /data/state.sqlite est VIDE. Voir deploy/RENDER.md
+#    pour charger ton état (la PII ne se versionne pas).
+#
+# Coût : plan "starter" = always-on + disque persistant (~7 $/mois). Le tier
+# gratuit ne permet ni disque persistant ni service toujours allumé.
+# Région : frankfurt (UE) → les données restent en Europe (RGPD).
+
+services:
+  - type: web
+    name: datareno-panel
+    runtime: docker
+    repo: https://github.com/paggerard-boop/datareno-
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    plan: starter
+    region: frankfurt
+    healthCheckPath: /healthz
+    autoDeploy: false           # on déploie volontairement (pas à chaque push)
+    disk:
+      name: datareno-data       # base SQLite persistante (survit aux redéploiements)
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: WEB_EXPOSED        # signal "accessible sur Internet" → auth OBLIGATOIRE
+        value: "1"
+      - key: WEB_DB             # base sur le disque persistant
+        value: /data/state.sqlite
+      - key: WEB_USER           # à saisir dans Render (jamais dans le dépôt)
+        sync: false
+      - key: WEB_PASSWORD       # idem — mot de passe long et unique
+        sync: false
