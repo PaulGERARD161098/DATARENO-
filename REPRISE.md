@@ -50,13 +50,33 @@ GESTE QUOTIDIEN (cron-ready, voir DEPLOY.md) :
   python -m src.recontact requeue --and-plan                 # hebdo : 3 mois échus
   python -m src.report                                       # funnel + reco A/B
 
-"MES CHOSES" EN ATTENTE (bloquent l'envoi réel — les CLI refusent tant que vide) :
-  1. B2 = base légale opt-in email vérifiée/archivée → LE SEUL SHOWSTOPPER (légal).
-  2. DNS SPF/DKIM/DMARC du domaine dédié + mail-tester.com (A5).
-  3. .env : SMTP_*, SENDER_EMAIL, UNSUBSCRIBE_MAILTO, IMAP_*, CALENDLY_URL, CALENDLY_TOKEN,
-     OPTOUT_URL, SENDER_NAME, REASSURANCE_*.
-  4. UI GitHub : supprimer les branches mergées/obsolètes (proxy bloque la suppression).
-  5. Brancher le cron du run quotidien (DEPLOY.md §6) + sauvegarder out/state.sqlite.
+PRÉPA LANCEMENT — DÉCISIONS PRISES (session 2026-06-16) :
+  - B2 opt-in : ✅ déclaré ARCHIVÉ par Paul (showstopper levé).
+  - Domaine dédié : ✅ renoadomicile.fr CRÉÉ chez Infomaniak (+ boîte contact@renoadomicile.fr).
+  - Envoi : ESP abandonné (Brevo payant) → on envoie GRATUITEMENT via le SMTP de la boîte
+    Infomaniak (mail.infomaniak.com 587/993) ; Infomaniak gère SPF/DKIM/DMARC. Runbook =
+    deploy/EMAIL_SETUP.md (.env littéral renoadomicile.fr).
+  - Calendly : ✅ CALENDLY_URL = https://calendly.com/paul-gerard-renoboostia/rdv-expert-cvc-30-min
+    (figé dans EMAIL_SETUP.md). Token PAT (scopes read: scheduled_events/invitees/user) à
+    générer + garder secret. NB : compte Calendly encore brandé « renoboostia » (cosmétique).
+  - Opt-out : ✅ page web/desinscription.html créée (mailto unsubscribe@ → IMAP → STOP).
+    À METTRE EN LIGNE (Infomaniak) → OPTOUT_URL=https://renoadomicile.fr/desinscription.html.
+  - HÉBERGEMENT : Paul est 100 % web (pas d'ordi perso). Décision = il récupère un PETIT
+    ORDI (Mac/PC ou Linux/Chromebook) → option tunnel GRATUITE (deploy/serve_public.sh),
+    PII chez lui. (Alternatives écartées : Render ~7 €/mois, Oracle Free VM trop technique.)
+
+"MES CHOSES" RESTANTES avant le 1er envoi :
+  1. RÉCUPÉRER UN PETIT ORDI → puis setup ~20 min : Python+Git, clone, deploy/install.sh,
+     remplir .env, importer la base, preflight check, serve_public.sh. (= déblocage n°1)
+  2. Secrets à mettre dans .env (gardés au chaud d'ici là) : CALENDLY_TOKEN, mot de passe
+     boîte (SMTP_PASSWORD/IMAP_PASSWORD), REASSURANCE_RGE/DECENNALE/NB_CHANTIERS.
+  3. Mettre web/desinscription.html en ligne chez Infomaniak (→ OPTOUT_URL).
+  4. Vérifier DKIM Infomaniak + mail-tester ≥ 9/10 (A5).
+  5. UI GitHub : supprimer les branches mergées/obsolètes (proxy bloque la suppression).
+
+TODO CODE PROMIS (pour le workflow 100 % navigateur, sans CLI) :
+  - Ajouter un bouton « Importer la base (CSV) » dans le panneau (src.web) → charger les
+    5 200 contacts depuis le navigateur (aujourd'hui c'est python -m src.tri/db en CLI).
 
 CHANTIERS DE RAFFINEMENT (l'outil tourne déjà sans ; par valeur) :
   a) Micro-lot test 20-30 en réel après gate GO (outillé : daily run --limit ; LAUNCH.md).
