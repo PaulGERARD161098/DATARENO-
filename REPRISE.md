@@ -94,6 +94,12 @@ DETTES TECHNIQUES (non bloquantes) :
     marqueur temporaire explicite. Escalade après 3 soft.
   - calendly/_default_fetch et inbox/imap : réseau non testé (logique testée via fetcher
     injecté). DSN forgé peut suppr. un contact (fail-safe assumé).
+  - SÉCURITÉ (risque accepté) : panneau web sans jeton CSRF sur les POST (message/reply/
+    poll). Risque faible (mono-utilisateur, Basic Auth + tunnel, pas d'URL publique
+    indexée). À durcir si multi-utilisateurs/exposition large (jeton anti-CSRF + SameSite).
+  - Audit sécu session 2026-06-16 : send_one rejoue les garde-fous de send_due
+    (suppression/placeholders/lint claims/coupe-circuit/cap) ; entrées panneau échappées
+    (_esc) ; SQL paramétré ; /healthz sans PII ; refus de démarrer si exposé sans auth. RAS.
 
 VÉRIF INITIALE : git status && git log --oneline -5
   puis pip install -r requirements.txt && python -m pytest -q && ruff check src tests

@@ -24,6 +24,19 @@ Autonome, hors stack RénoBoost. Robustesse : **prod-léger**.
 - Séparer génération et évaluation (ne pas juger le code écrit dans le même tour).
 - Pre-mortem avant tout lancement. Je dois te dire ce que j'ai déjà essayé.
 
+## 🔚 Rituel de fin de session (OBLIGATOIRE)
+Dès que Paul dit « fin de session » (ou équivalent), exécuter **dans l'ordre** :
+1. **Synthèse du travail effectué** — livré/décidé, état des PR.
+2. **Audit de sécurité + patch des failles** — relire le code de la session (surfaces
+   d'attaque, PII/RGPD, injections SQL/HTML, secrets, auth/authz) ; **corriger
+   immédiatement** les failles trouvées ; consigner les risques acceptés.
+3. **Nettoyage du code mort** — retirer code/fichiers/branches inutiles ; vérifier
+   `python -m pytest -q` **et** `ruff check src tests` verts.
+4. **Roadmap cadrée pour la suite** — prochaines étapes ordonnées + critères de passage.
+5. **Prompt de reprise** — mettre à jour `REPRISE.md` (zéro perte de contexte) + fournir
+   le prompt maître.
+Règle « toujours propre » : commit + push + PR + **merge dans `main`** avant de clore.
+
 ## 🛠️ Défauts techniques
 - Langages : **Python** (pipeline), TS si dashboard web (phase 2).
 - Archi : **Pydantic** pour validation, try/except typé par bloc, fallbacks explicites,
@@ -55,7 +68,7 @@ URL Calendly · URL opt-out · domaine d'envoi dédié · réassurance (RGE / d�
 ```
 pip install -r requirements.txt
 python -m src.tri data/base.csv --outdir out        # Phase 1 (faite)
-python -m pytest -q                                  # 31 tests
+python -m pytest -q                                  # 177 tests
 ```
 
 Voir `SPEC.md` (contrat de build figé) et `TASKS.md` (séquencement des phases).
