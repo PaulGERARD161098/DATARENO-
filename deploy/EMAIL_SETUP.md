@@ -49,7 +49,7 @@ IMAP_USER=contact@renoadomicile.fr
 IMAP_PASSWORD=<mot-de-passe-boîte>
 
 # Liens
-CALENDLY_URL=https://calendly.com/<toi>/<event>
+CALENDLY_URL=https://calendly.com/paul-gerard-renoboostia/rdv-expert-cvc-30-min
 CALENDLY_TOKEN=<personal-access-token-calendly>   # Calendly → Integrations → API & webhooks
 OPTOUT_URL=https://renoadomicile.fr/desinscription # page https réelle, testée cliquable (voir note)
 
