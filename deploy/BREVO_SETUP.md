@@ -1,8 +1,8 @@
 # deploy/BREVO_SETUP.md — brancher l'envoi réel via Brevo (EU)
 
 Runbook concret de l'étape **A5 (DNS) + `.env`** du lancement, pour l'ESP **Brevo**.
-Remplace partout `<DOMAINE>` par ton **domaine d'envoi dédié** (jamais ton domaine
-principal). À faire une fois **B2 (opt-in archivé)** validé.
+**Configuré pour le domaine dédié `renoadomicile.fr`** (les valeurs ci-dessous sont
+littérales, copier-coller direct). À faire une fois **B2 (opt-in archivé)** validé.
 
 > Ordre : 1) authentifier le domaine → 2) poser les DNS → 3) clé SMTP → 4) boîte de
 > réception (réponses) → 5) `.env` → 6) gate preflight → 7) micro-lot (LAUNCH.md §3).
@@ -10,7 +10,7 @@ principal). À faire une fois **B2 (opt-in archivé)** validé.
 ---
 
 ## 1. Authentifier le domaine dans Brevo
-Brevo → **Senders, Domains & Dedicated IPs → Domains → Add a domain** → saisir `<DOMAINE>`.
+Brevo → **Senders, Domains & Dedicated IPs → Domains → Add a domain** → saisir `renoadomicile.fr`.
 Brevo affiche alors **les enregistrements exacts à copier** (DKIM + code de vérification).
 
 ## 2. Poser les DNS (chez ton registrar)
@@ -19,7 +19,7 @@ Brevo affiche alors **les enregistrements exacts à copier** (DKIM + code de vé
 | TXT   | `@`                          | `v=spf1 include:spf.brevo.com ~all`                          |
 | TXT/CNAME | `brevo._domainkey` *(exact donné par Brevo)* | la valeur **DKIM** affichée par Brevo (copier verbatim) |
 | TXT   | *(code de vérif Brevo)*      | `brevo-code:...` (copier verbatim depuis Brevo)             |
-| TXT   | `_dmarc`                     | `v=DMARC1; p=none; rua=mailto:dmarc@<DOMAINE>` *(voir note)* |
+| TXT   | `_dmarc`                     | `v=DMARC1; p=none; rua=mailto:dmarc@renoadomicile.fr` *(voir note)* |
 
 > **DMARC** : démarre en `p=none` (observation, ne casse rien). Une fois SPF+DKIM en
 > `pass` confirmés (mail-tester), passe à `p=quarantine`. Ne mets `adkim=s; aspf=s`
@@ -36,7 +36,7 @@ Brevo → **SMTP & API → SMTP**. Tu obtiens :
 
 ## 4. Boîte de réception des réponses (IMAP)
 Brevo **envoie** mais ne fournit pas de boîte. Les **réponses + bounces** reviennent sur
-la mailbox de `SENDER_EMAIL`. Il te faut donc une **vraie boîte mail sur `<DOMAINE>`**
+la mailbox de `SENDER_EMAIL`. Il te faut donc une **vraie boîte mail sur `renoadomicile.fr`**
 (chez ton registrar, Gandi, OVH, Google Workspace…) avec accès **IMAP** → c'est elle que
 `src.inbox` relèvera. Note ses `IMAP_HOST` / `IMAP_PORT` (993) / login / mot de passe.
 
@@ -48,20 +48,21 @@ SMTP_PORT=587
 SMTP_STARTTLS=true
 SMTP_USER=<ton-email-compte-brevo>
 SMTP_PASSWORD=<clé-SMTP-brevo>
-SENDER_EMAIL=contact@<DOMAINE>          # doit appartenir au domaine authentifié
-SENDER_NAME=<Prénom Nom ou Marque>
-UNSUBSCRIBE_MAILTO=unsubscribe@<DOMAINE>
+SENDER_EMAIL=contact@renoadomicile.fr          # doit appartenir au domaine authentifié
+SENDER_NAME=Réno à domicile
+UNSUBSCRIBE_MAILTO=unsubscribe@renoadomicile.fr
 
 # Réception des retours (ta boîte sur le domaine)
-IMAP_HOST=<imap.ton-hébergeur>
+# Infomaniak → mail.infomaniak.com · OVH → ssl0.ovh.net (vérifier dans le webmail)
+IMAP_HOST=<mail.infomaniak.com | ssl0.ovh.net>
 IMAP_PORT=993
-IMAP_USER=contact@<DOMAINE>
+IMAP_USER=contact@renoadomicile.fr
 IMAP_PASSWORD=<mot-de-passe-boîte>
 
 # Liens
 CALENDLY_URL=https://calendly.com/<toi>/<event>
 CALENDLY_TOKEN=<personal-access-token-calendly>   # Calendly → Integrations → API & webhooks
-OPTOUT_URL=https://<DOMAINE>/desinscription        # page https réelle, testée cliquable
+OPTOUT_URL=https://renoadomicile.fr/desinscription        # page https réelle, testée cliquable
 
 # Réassurance (affichée dans les mails)
 REASSURANCE_RGE=<n° ou mention RGE>
