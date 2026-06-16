@@ -11,21 +11,29 @@ Projet : DATA RÉNO Pipeline — cold outreach EMAIL d'une base réno (B2C, 5 20
 vers RDV PAC. Python + SQLite local, autonome. Repo : paggerard-boop/DATARENO-.
 Tout auto SAUF 2 clics humains : envoyer + booker. Conformité DGCCRF/RGPD = cœur.
 
-ÉTAT (v1.3 — outil complet + 2 interfaces ; démo end-to-end) :
-- main à jour (PR #2→#8 mergées). 172 tests verts, ruff clean.
-  Dév sur claude/datareno-pipeline-setup-km56q4 (repartir de main).
+ÉTAT (v1.4 — outil complet + COCKPIT de travail + accès navigateur gratuit) :
+- main : Phases 1→9 livrées. 177 tests verts, ruff clean.
+  Dév sur claude/datareno-pipeline-setup-km56q4. PR #12 OUVERTE (CI verte) =
+  cockpit de travail + déploiement navigateur ; à merger dans main.
 - INTERFACES :
-  · PANNEAU LOCAL / DISTANT (le plus simple) : `python -m src.web` → http://127.0.0.1:8765,
-    boutons (relever retours, envoyer la file, valider réponse, leads chauds nominatifs).
-    Stdlib, .env auto-chargé. AUTH Basic optionnelle (WEB_USER/WEB_PASSWORD) → exposable
-    via tunnel (Tailscale/Cloudflare, cf. deploy/REMOTE_ACCESS.md) sans fuite de PII.
-    Actions = web.action_run / web.action_reply ; auth = web.auth_ok (testées sans socket).
-  · DASHBOARD VERCEL (distant, lecture seule, agrégats SANS PII) : web/ + src.webexport,
-    déployable (vercel.json racine outputDirectory=web). Voir web/README.md.
-- DÉPLOIEMENT OPÉRATIONNEL : kit deploy/ (config-only, sans changement de code) :
-  install.sh, systemd (datareno-web.service + datareno-daily.timer), crontab.example,
-  Dockerfile + docker-compose.yml. Env fourni par le service (EnvironmentFile/env_file/
-  source .env). Accès panneau à distance = tunnel SSH (jamais d'expo PII). Voir deploy/README.md.
+  · COCKPIT DE TRAVAIL (`python -m src.web` → http://127.0.0.1:8765) — le quotidien :
+    « À envoyer aujourd'hui » = un éditeur PAR message dû (objet+corps modifiables) +
+    boutons Envoyer (clic humain, envoi unitaire) / Enregistrer ; « Réponses à traiter »
+    = contacts ayant répondu, classe proposée pré-sélectionnée + Appliquer (texte NON
+    stocké = RGPD, lu dans la boîte mail) ; bouton « Relever les retours » (IMAP/Calendly,
+    n'envoie rien) ; + KPIs/gate/leads chauds/A-B. Stdlib, .env auto-chargé.
+    Actions = web.action_message / web.action_reply / web.action_poll ;
+    envoi unitaire = sender.send_one (mêmes garde-fous que send_due) ;
+    file réponses = web.pending_replies ; auth = web.auth_ok (testées sans socket).
+  · ACCÈS NAVIGATEUR GRATUIT (depuis partout, sans serveur) : `bash deploy/serve_public.sh`
+    = panneau local + tunnel Cloudflare gratuit → URL HTTPS (tél/PC). PII reste sur la
+    machine. AUTH obligatoire si exposé (WEB_EXPOSED=1 → refuse sans WEB_USER/PASSWORD).
+    Option 24/7 payante : Render (render.yaml, ~7 €/mois, disque UE) cf. deploy/RENDER.md.
+  · DASHBOARD VERCEL (distant, lecture seule, agrégats SANS PII) : web/ + src.webexport.
+- DÉPLOIEMENT OPÉRATIONNEL : kit deploy/ (config-only) : install.sh, systemd
+  (datareno-web.service + datareno-daily.timer), crontab.example, Dockerfile +
+  docker-compose.yml. + serve_public.sh (tunnel gratuit) et render.yaml (PaaS 24/7).
+  Accès distant sans PaaS = tunnel (Cloudflare gratuit / Tailscale / SSH). Voir deploy/README.md.
 - PIPELINE COMPLET & RUNNABLE :
   tri → db(import+hygiene) → drafts(perso prénom + A/B) → sequence → PREFLIGHT(gate
   Go/No-Go) → daily run(ingestion retours IMAP + RDV Calendly PUIS envoi SMTP, --limit

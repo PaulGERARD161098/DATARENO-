@@ -186,6 +186,83 @@ def send_due(
     return result
 
 
+def send_one(
+    conn: sqlite3.Connection,
+    message_id: int,
+    transport: Transport | None = None,
+    *,
+    confirm: bool = False,
+    on_date: date | None = None,
+    bounce_limit: float | None = None,
+    bounce_min_sample: int = BOUNCE_MIN_SAMPLE,
+    caps: tuple[int, int, int] | None = None,
+    day_index: int | None = None,
+) -> dict[str, object]:
+    """Envoie UN message précis (clic humain depuis le panneau), avec les MÊMES
+    garde-fous que `send_due`. Renvoie `{"status": ...}` (jamais d'exception métier).
+
+    status possibles : not_found · already_sent · suppressed · blocked_placeholder ·
+    blocked_claim · simulated (dry-run) · circuit_breaker · cap_reached · failed · sent.
+    """
+    on_date = on_date or date.today()
+    row = conn.execute(
+        "SELECT m.id AS message_id, m.contact_id, m.subject, m.body, m.status, c.email "
+        "FROM messages m JOIN contacts c ON c.id = m.contact_id WHERE m.id = ?",
+        (message_id,),
+    ).fetchone()
+    if row is None:
+        return {"status": "not_found"}
+    if row["status"] == "sent":
+        return {"status": "already_sent"}
+
+    # Suppression (opt-out / bounce) : on ne renvoie jamais à un contact supprimé.
+    if conn.execute("SELECT 1 FROM suppressions WHERE email = ?", (row["email"],)).fetchone():
+        return {"status": "suppressed"}
+    # B1 — placeholder non renseigné ; B5 — re-lint claims (corps édité à la main).
+    if unfilled_placeholders(row["body"]):
+        return {"status": "blocked_placeholder"}
+    if lint_claims(f"{row['subject']}\n{row['body']}"):
+        return {"status": "blocked_claim"}
+
+    if not (confirm and transport is not None):
+        return {"status": "simulated"}
+
+    # A4 — coupe-circuit bounce-rate (protège la réputation du domaine).
+    if bounce_limit is None:
+        bounce_limit = _env_float("BOUNCE_RATE_LIMIT", 0.05)
+    sent_total, _bounced, rate = bounce_stats(conn)
+    if sent_total >= bounce_min_sample and rate > bounce_limit:
+        return {"status": "circuit_breaker", "bounce_rate": round(rate, 4)}
+
+    # Plafond warm-up du jour (même logique d'auto-index que le batch).
+    caps = caps or warmup_caps()
+    if day_index is None:
+        day_index = auto_day_index(conn, on_date)
+    if cap_for_day(day_index, caps) - _sent_today(conn, on_date) <= 0:
+        return {"status": "cap_reached"}
+
+    try:
+        ok = transport(row["email"], row["subject"], row["body"])
+    except Exception:  # noqa: BLE001 — un envoi raté ne lève pas, on le signale
+        ok = False
+    if not ok:
+        return {"status": "failed"}
+
+    now = _db._now()
+    conn.execute("UPDATE messages SET status='sent' WHERE id=?", (message_id,))
+    conn.execute(
+        "INSERT INTO events (contact_id, message_id, type, created_at) VALUES (?, ?, 'sent', ?)",
+        (row["contact_id"], message_id, now),
+    )
+    conn.execute(
+        "UPDATE contacts SET status='contacted', updated_at=? WHERE id=? AND status='new'",
+        (now, row["contact_id"]),
+    )
+    conn.commit()
+    logger.info("send unitaire", extra={"context": {"message_id": message_id, "status": "sent"}})
+    return {"status": "sent"}
+
+
 # Anti header-injection : un CR/LF dans une valeur d'en-tête permettrait d'injecter
 # des en-têtes arbitraires (Bcc…). EmailMessage refuse déjà ; on neutralise partout.
 _HEADER_UNSAFE = re.compile(r"[\r\n]+")

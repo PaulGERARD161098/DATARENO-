@@ -35,7 +35,7 @@ from . import preflight as _preflight
 from . import replies as _replies
 from . import report as _report
 from . import scoring as _scoring
-from .sender import SmtpConfig, due_messages, smtp_transport
+from .sender import SmtpConfig, due_messages, send_one, smtp_transport
 from .templates import MessageContext
 
 _STYLE = (
@@ -49,8 +49,12 @@ _STYLE = (
     "table{width:100%;border-collapse:collapse;font-size:.86rem}"
     "th,td{text-align:left;padding:.4rem .6rem;border-bottom:1px solid #262b36}th{color:#8b95a7}"
     "button{background:#2ecc71;color:#06281a;border:0;border-radius:8px;padding:.5rem .9rem;"
-    "font-weight:700;cursor:pointer}input,select{background:#0b0d11;color:#e7ebf0;border:1px solid"
-    " #2b3340;border-radius:7px;padding:.4rem .5rem}label{font-size:.88rem}"
+    "font-weight:700;cursor:pointer}input,select,textarea{background:#0b0d11;color:#e7ebf0;border:1px solid"
+    " #2b3340;border-radius:7px;padding:.4rem .5rem;font:inherit}label{font-size:.88rem}"
+    "button.ghost{background:#262b36;color:#e7ebf0}textarea{width:100%;min-height:8rem;resize:vertical}"
+    ".msg input.subj{width:100%;margin:.3rem 0}.msg .to{color:#8b95a7;font-size:.82rem}"
+    ".msg{border-bottom:1px solid #262b36;padding:.8rem 0}.msg:last-child{border-bottom:0}"
+    ".row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-top:.4rem}"
     ".flash{background:#13351f;border:1px solid #2ecc71;padding:.7rem 1rem;border-radius:10px;margin:.6rem 0}"
     ".go{color:#2ecc71;font-weight:700}.nogo{color:#ff6b4a;font-weight:700}.muted{color:#8b95a7;font-size:.82rem}"
 )
@@ -78,6 +82,28 @@ def _esc(x: object) -> str:
 
 def _kpi(label: str, value: object) -> str:
     return f"<div class='card kpi'><div class='v'>{_esc(value)}</div><div class='l'>{_esc(label)}</div></div>"
+
+
+# Statuts « réponse déjà traitée » (posés par replies.apply_action) → à exclure de la file.
+_HANDLED_STATUS = ("interested", "rdv", "recontact_3m", "not_interested", "stopped", "bounced")
+
+
+def pending_replies(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    """Contacts ayant répondu (event 'reply') dont l'action n'est PAS encore validée
+    (statut non final). La classe proposée = payload de la dernière réponse."""
+    rows = conn.execute(
+        "SELECT c.id AS contact_id, c.email, "
+        "  (SELECT e2.payload FROM events e2 WHERE e2.contact_id=c.id AND e2.type='reply' "
+        "   ORDER BY e2.created_at DESC LIMIT 1) AS proposed, "
+        "  MAX(e.created_at) AS at "
+        "FROM events e JOIN contacts c ON c.id = e.contact_id "
+        "WHERE e.type='reply' AND c.status NOT IN "
+        f"  ({','.join('?' * len(_HANDLED_STATUS))}) "
+        "GROUP BY c.id ORDER BY at DESC LIMIT 50",
+        _HANDLED_STATUS,
+    ).fetchall()
+    return [{"contact_id": r["contact_id"], "email": r["email"],
+             "proposed": r["proposed"] or _replies.RECONTACTER} for r in rows]
 
 
 def render_panel(conn: sqlite3.Connection, *, flash: str = "", on_date: date | None = None) -> str:
@@ -108,31 +134,53 @@ def render_panel(conn: sqlite3.Connection, *, flash: str = "", on_date: date | N
         _kpi("Taux réponse", f"{kpis['taux_reponse_%']} %"),
     ])
 
-    # Action : relever + envoyer la file du jour
-    real_note = ("" if smtp_ready else
-                 "<span class='muted'> (SMTP non configuré → simulation forcée)</span>")
-    send_card = (
+    # Relever les retours (IMAP/Calendly) sans rien envoyer.
+    poll_card = (
         "<form method='post' action='/action'>"
-        "<input type='hidden' name='action' value='run'>"
-        "<label>Plafonner à <input type='number' name='limit' min='1' placeholder='ex. 25' style='width:90px'>"
-        " (vide = plafond warm-up)</label><br><br>"
-        f"<label><input type='checkbox' name='confirm' value='1'> Envoi réel{real_note}</label>"
-        "<br><br><button type='submit'>Relever les retours + Envoyer la file du jour</button>"
-        "<div class='muted'>Sans « envoi réel » coché : simulation (rien n'est envoyé).</div>"
+        "<input type='hidden' name='action' value='poll'>"
+        "<button type='submit'>Relever les retours (IMAP/Calendly)</button>"
+        "<span class='muted'> Importe les nouvelles réponses/RDV. N'envoie rien.</span>"
         "</form>"
     )
 
-    # Action : valider une réponse
-    opts = "".join(f"<option value='{_esc(lbl)}'>{_esc(lbl)}</option>" for lbl in _replies.ALL_LABELS)
-    reply_card = (
+    # À ENVOYER : un éditeur par message dû (objet + corps modifiables → Envoyer / Enregistrer).
+    send_note = ("" if smtp_ready else
+                 "<span class='muted'> — SMTP non configuré : « Envoyer » = simulation.</span>")
+    queue = due_messages(conn, on_date)[:25]
+    msg_cards = "".join(
+        "<div class='msg'>"
+        f"<div class='to'>#{_esc(m['contact_id'])} · {_esc(m['email'])}</div>"
         "<form method='post' action='/action'>"
+        "<input type='hidden' name='action' value='message'>"
+        f"<input type='hidden' name='message_id' value='{_esc(m['message_id'])}'>"
+        f"<input class='subj' name='subject' value='{_esc(m['subject'] or '')}' placeholder='Objet'>"
+        f"<textarea name='body' placeholder='Corps du message'>{_esc(m['body'] or '')}</textarea>"
+        "<div class='row'>"
+        "<button type='submit' name='do' value='send'>Envoyer</button>"
+        "<button type='submit' name='do' value='save' class='ghost'>Enregistrer</button>"
+        "</div></form></div>"
+        for m in queue
+    ) or "<p class='muted'>Rien à envoyer aujourd'hui.</p>"
+
+    # RÉPONSES À TRAITER : contacts ayant répondu, action non encore validée.
+    def opts_for(proposed: str) -> str:
+        return "".join(
+            f"<option value='{_esc(lbl)}'{' selected' if lbl == proposed else ''}>{_esc(lbl)}</option>"
+            for lbl in _replies.ALL_LABELS
+        )
+    reply_rows = "".join(
+        "<div class='msg'>"
+        f"<div class='to'>#{_esc(r['contact_id'])} · {_esc(r['email'])} "
+        f"· classe proposée : <b>{_esc(r['proposed'])}</b></div>"
+        "<form method='post' action='/action'><div class='row'>"
         "<input type='hidden' name='action' value='reply'>"
-        "<label>Contact #<input type='number' name='contact_id' min='1' required style='width:90px'></label> "
-        f"<select name='label'>{opts}</select> "
-        "<button type='submit'>Valider la réponse</button>"
-        "<div class='muted'>Applique l'action validée (STOP→blacklist, INTERESSE→Calendly, etc.).</div>"
-        "</form>"
-    )
+        f"<input type='hidden' name='contact_id' value='{_esc(r['contact_id'])}'>"
+        f"<select name='label'>{opts_for(r['proposed'])}</select> "
+        "<button type='submit'>Appliquer</button>"
+        "<span class='muted'>Lis le mail dans ta boîte, choisis l'action, applique.</span>"
+        "</div></form></div>"
+        for r in pending_replies(conn)
+    ) or "<p class='muted'>Aucune réponse en attente. Clique « Relever les retours » pour importer.</p>"
 
     hot_rows = "".join(
         f"<tr><td>#{_esc(h['contact_id'])}</td><td>{_esc(h['email'])}</td><td>{_esc(h['dernier_clic'])}</td></tr>"
@@ -157,8 +205,10 @@ def render_panel(conn: sqlite3.Connection, *, flash: str = "", on_date: date | N
         f"Calendly {'✅' if cal_ready else '—'}</p>"
         f"{flash_html}"
         f"<div class='kpis'>{kpi_html}</div>"
-        f"<h2>Geste du jour</h2><div class='card'>{send_card}</div>"
-        f"<h2>Valider une réponse</h2><div class='card'>{reply_card}</div>"
+        f"<div class='card'>{poll_card}</div>"
+        f"<h2>À envoyer aujourd'hui{send_note}</h2><div class='card'>{msg_cards}</div>"
+        "<h2>Réponses à traiter</h2>"
+        f"<div class='card'>{reply_rows}</div>"
         "<h2>Leads chauds — cliqueurs sans réponse (à relancer)</h2>"
         f"<div class='card'><table><thead><tr><th>Contact</th><th>Email</th><th>Dernier clic</th></tr></thead>"
         f"<tbody>{hot_rows}</tbody></table></div>"
@@ -189,6 +239,54 @@ def action_run(conn: sqlite3.Connection, *, confirm: bool, limit: int | None) ->
     return f"Envoyés : {snd['sent']} · échecs {snd['failed']} · bloqués {snd['blocked_placeholder'] + snd['blocked_claim']}."
 
 
+def action_poll(conn: sqlite3.Connection) -> str:
+    """Relève les retours (IMAP/Calendly) SANS rien envoyer (dry-run d'envoi)."""
+    imap_cfg = _inbox.ImapConfig.from_env()
+    imap_cfg = None if imap_cfg.missing() else imap_cfg
+    cal_cfg = _calendly.CalendlyConfig.from_env()
+    cal_cfg = None if cal_cfg.missing() else cal_cfg
+    if imap_cfg is None and cal_cfg is None:
+        return "IMAP/Calendly non configurés : rien à relever (renseigne le .env)."
+    s = _daily.run_daily(conn, transport=None, confirm=False,
+                         imap_cfg=imap_cfg, calendly_cfg=cal_cfg, limit=None)
+    inb = s.get("inbox") or {}
+    rdv = s.get("calendly") or {}
+    return (f"Relevé : {inb.get('replies', 0)} réponse(s), "
+            f"{rdv.get('matched', 0)} RDV importé(s). Rien n'a été envoyé.")
+
+
+_SEND_FLASH = {
+    "sent": "✅ Envoyé.",
+    "simulated": "Simulation (SMTP non configuré) : rien n'est parti.",
+    "already_sent": "Déjà envoyé.",
+    "not_found": "Message introuvable.",
+    "suppressed": "⛔ Contact en liste de suppression (opt-out/bounce) : non envoyé.",
+    "blocked_placeholder": "⛔ Placeholder « [..] » non renseigné : complète le message.",
+    "blocked_claim": "⛔ Claim interdit détecté (DGCCRF) : reformule avant d'envoyer.",
+    "circuit_breaker": "⛔ Coupe-circuit bounce-rate : envois suspendus (réputation domaine).",
+    "cap_reached": "⛔ Plafond warm-up atteint pour aujourd'hui.",
+    "failed": "❌ Échec d'envoi (réessaie).",
+}
+
+
+def action_message(conn: sqlite3.Connection, message_id: int, subject: str, body: str, do: str) -> str:
+    """Enregistre l'édition d'un message dû, et l'envoie si `do == 'send'`."""
+    if message_id <= 0:
+        return "Message introuvable."
+    # Sauvegarde toujours l'édition (sauf message déjà envoyé).
+    cur = conn.execute(
+        "UPDATE messages SET subject=?, body=? WHERE id=? AND status!='sent'",
+        (subject, body, message_id),
+    )
+    conn.commit()
+    if do != "send":
+        return "Brouillon enregistré." if cur.rowcount else "Rien à enregistrer (déjà envoyé ?)."
+    smtp_cfg = SmtpConfig.from_env()
+    transport = None if smtp_cfg.missing() else smtp_transport(smtp_cfg, MessageContext.from_env())
+    res = send_one(conn, message_id, transport, confirm=transport is not None)
+    return _SEND_FLASH.get(str(res.get("status")), f"Statut : {res.get('status')}.")
+
+
 def action_reply(conn: sqlite3.Connection, contact_id: int, label: str) -> str:
     """Valide la classe d'une réponse pour un contact (action humaine)."""
     if label not in _replies.ALL_LABELS:
@@ -197,6 +295,14 @@ def action_reply(conn: sqlite3.Connection, contact_id: int, label: str) -> str:
     r = _replies.apply_action(conn, contact_id, label, ctx=MessageContext.from_env())
     return (f"Contact #{contact_id} → {label} · touches annulées {r['cancelled']} · "
             f"suppression {'oui' if r['suppressed'] else 'non'}.")
+
+
+def _open_db(db_path: str):
+    """Ouvre la base et garantit le schéma (idempotent) → une base vide
+    (ex. 1er démarrage sur disque neuf) s'affiche à zéro au lieu de planter."""
+    conn = _db.connect(db_path)
+    _db.init_db(conn)
+    return conn
 
 
 def _make_handler(db_path: str, user: str = "", password: str = ""):
@@ -220,12 +326,21 @@ def _make_handler(db_path: str, user: str = "", password: str = ""):
             return False
 
         def do_GET(self) -> None:  # noqa: N802
+            # Sonde de santé pour l'hébergeur (PaaS) : 200, sans auth, sans PII.
+            if self.path.split("?")[0] == "/healthz":
+                body = b"ok"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if not self._guard():
                 return
             if self.path.split("?")[0] not in ("/", "/index.html"):
                 self._send_html("<p>404</p>", 404)
                 return
-            conn = _db.connect(db_path)
+            conn = _open_db(db_path)
             try:
                 self._send_html(render_panel(conn))
             finally:
@@ -237,16 +352,23 @@ def _make_handler(db_path: str, user: str = "", password: str = ""):
             length = int(self.headers.get("Content-Length", 0))
             form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
             action = form.get("action", [""])[0]
-            conn = _db.connect(db_path)
+            conn = _open_db(db_path)
             try:
-                if action == "run":
-                    limit = form.get("limit", [""])[0].strip()
-                    flash = action_run(conn, confirm=form.get("confirm", [""])[0] == "1",
-                                       limit=int(limit) if limit.isdigit() else None)
+                if action == "poll":
+                    flash = action_poll(conn)
+                elif action == "message":
+                    mid = form.get("message_id", ["0"])[0]
+                    flash = action_message(conn, int(mid) if mid.isdigit() else 0,
+                                           form.get("subject", [""])[0], form.get("body", [""])[0],
+                                           form.get("do", [""])[0])
                 elif action == "reply":
                     cid = form.get("contact_id", ["0"])[0]
                     flash = action_reply(conn, int(cid) if cid.isdigit() else 0,
                                          form.get("label", [""])[0])
+                elif action == "run":  # compat : relève + envoi/simu en un geste (CLI/anciens liens)
+                    limit = form.get("limit", [""])[0].strip()
+                    flash = action_run(conn, confirm=form.get("confirm", [""])[0] == "1",
+                                       limit=int(limit) if limit.isdigit() else None)
                 else:
                     flash = "Action inconnue."
                 self._send_html(render_panel(conn, flash=flash))
@@ -262,22 +384,30 @@ def _make_handler(db_path: str, user: str = "", password: str = ""):
 def main(argv: list[str] | None = None) -> int:
     _C.load_env()  # charge .env automatiquement
     parser = argparse.ArgumentParser(description="Panneau de pilotage local (navigateur).")
-    parser.add_argument("--db", default=_db.DEFAULT_DB)
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--db", default=os.getenv("WEB_DB", _db.DEFAULT_DB))
+    # $PORT est injecté par les hébergeurs (Render, Railway, Fly…).
+    parser.add_argument("--port", type=int, default=int(os.getenv("PORT", "8765")))
     parser.add_argument("--host", default="127.0.0.1", help="Défaut localhost (NE PAS exposer : PII).")
     parser.add_argument("--no-open", action="store_true", help="Ne pas ouvrir le navigateur.")
     args = parser.parse_args(argv)
 
     user = os.getenv("WEB_USER", "").strip()
     password = os.getenv("WEB_PASSWORD", "").strip()
+    has_auth = bool(user and password)
+    non_local = args.host not in ("127.0.0.1", "localhost")
+    public = bool(os.getenv("WEB_EXPOSED"))  # signal EXPLICITE « accessible sur Internet » (PaaS)
+    # Public sans auth = fuite de PII → on REFUSE de démarrer (pas un simple avertissement).
+    if public and not has_auth:
+        print("⛔ WEB_EXPOSED=1 (accessible sur Internet) SANS auth : refus de démarrer. "  # noqa: T201
+              "Définis WEB_USER et WEB_PASSWORD (données personnelles).")
+        return 2
+    if non_local and not public and not has_auth:
+        print("⚠️  Bind hors localhost sans auth : à ne publier que sur une loopback "  # noqa: T201
+              "(ex. docker-compose). Pour un accès Internet, mets WEB_EXPOSED=1 + auth.")
     url = f"http://{args.host}:{args.port}"
     httpd = ThreadingHTTPServer((args.host, args.port), _make_handler(args.db, user, password))
     auth_state = "auth ON (Basic)" if (user and password) else "auth OFF"
     print(f"Panneau de pilotage → {url}  [{auth_state}]  (Ctrl+C pour arrêter)")  # noqa: T201
-    exposed = args.host not in ("127.0.0.1", "localhost")
-    if (exposed or os.getenv("WEB_EXPOSED")) and not (user and password):
-        print("⚠️  Panneau accessible hors localhost SANS auth : définis WEB_USER/WEB_PASSWORD "  # noqa: T201
-              "(données personnelles). Recommandé même derrière un tunnel.")
     if not args.no_open:
         try:
             webbrowser.open(url)

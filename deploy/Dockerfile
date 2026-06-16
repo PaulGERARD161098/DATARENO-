@@ -7,7 +7,11 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
-# Panneau de pilotage. Dans le conteneur on écoute 0.0.0.0, mais on ne PUBLIE que sur
-# 127.0.0.1 côté hôte (cf. docker-compose) → jamais exposé sur Internet (PII).
+# Panneau de pilotage. Dans le conteneur on écoute 0.0.0.0.
+#  - En local (docker-compose) : on ne PUBLIE que sur 127.0.0.1 → jamais sur Internet.
+#  - Sur un PaaS (Render/Railway/Fly) : exposé en HTTPS, donc WEB_USER/WEB_PASSWORD
+#    sont OBLIGATOIRES (le panneau refuse de démarrer sans, cf. src/web.py).
+# Le port vient de $PORT (injecté par le PaaS, défaut 8765) et la base de $WEB_DB
+# (à placer sur un disque persistant, ex. /data/state.sqlite).
 EXPOSE 8765
-CMD ["python", "-m", "src.web", "--db", "out/state.sqlite", "--host", "0.0.0.0", "--port", "8765", "--no-open"]
+CMD ["python", "-m", "src.web", "--host", "0.0.0.0", "--no-open"]

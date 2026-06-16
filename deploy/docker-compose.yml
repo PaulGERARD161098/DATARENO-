@@ -6,6 +6,9 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     env_file: ../.env
+    # La base vit dans le volume out/ monté ci-dessous (comportement historique).
+    environment:
+      WEB_DB: out/state.sqlite
     # Publié UNIQUEMENT sur la loopback de l'hôte (PII) → accès via tunnel SSH.
     ports:
       - "127.0.0.1:8765:8765"

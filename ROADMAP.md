@@ -76,6 +76,11 @@ Vue état pipeline + file de validation drafts/réponses (lecture SQLite).
 - **Dashboard enrichi** : funnel, RDV pris, leads chauds, paliers, A/B objet.
 - **Micro-lot** : `src.daily run --limit N` (ou `src.sender send --limit N`) pour le 1ᵉʳ test.
 - **Déploiement & lancement** : `DEPLOY.md` (cron) + `LAUNCH.md` (runbook 1ʳᵉ campagne).
+- **Cockpit de travail** (v1.4, `src/web.py`) : « À envoyer » = envoi **message par message,
+  objet+corps éditables** (`sender.send_one`, mêmes garde-fous que le batch) ; « Réponses à
+  traiter » = classe proposée + Appliquer (texte non stocké, RGPD) ; « Relever les retours ».
+- **Accès navigateur gratuit** (v1.4) : `bash deploy/serve_public.sh` (tunnel Cloudflare,
+  0 €, PII sur la machine) ; option 24/7 payante Render (`render.yaml`, cf. `deploy/RENDER.md`).
 - Reste **hors code** : **B2** (base légale opt-in, showstopper), **A5** (SPF/DKIM/DMARC),
   remplir `.env`, brancher le cron. Futurs raffinements : jitter/throttle par domaine
   destinataire, seed-list de délivrabilité, alerting sur coupe-circuit.
