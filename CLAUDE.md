@@ -35,6 +35,10 @@ Dès que Paul dit « fin de session » (ou équivalent), exécuter **dans l'ordr
 4. **Roadmap cadrée pour la suite** — prochaines étapes ordonnées + critères de passage.
 5. **Prompt de reprise** — mettre à jour `REPRISE.md` (zéro perte de contexte) + fournir
    le prompt maître.
+6. **Fiche Notion éponyme** — créer (si absente) ou mettre à jour la page Notion
+   « DATA RÉNO » pour tout archiver : synthèse, décisions, roadmap, état. **Jamais de
+   PII/contacts dedans** (le « Pas de Notion » du pipeline reste vrai pour l'ÉTAT/données ;
+   Notion sert uniquement de mémoire de suivi de session).
 Règle « toujours propre » : commit + push + PR + **merge dans `main`** avant de clore.
 
 ## 🛠️ Défauts techniques
