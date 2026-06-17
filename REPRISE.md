@@ -65,18 +65,42 @@ PRÉPA LANCEMENT — DÉCISIONS PRISES (session 2026-06-16) :
     ORDI (Mac/PC ou Linux/Chromebook) → option tunnel GRATUITE (deploy/serve_public.sh),
     PII chez lui. (Alternatives écartées : Render ~7 €/mois, Oracle Free VM trop technique.)
 
-"MES CHOSES" RESTANTES avant le 1er envoi :
-  1. RÉCUPÉRER UN PETIT ORDI → puis setup ~20 min : Python+Git, clone, deploy/install.sh,
-     remplir .env, importer la base, preflight check, serve_public.sh. (= déblocage n°1)
-  2. Secrets à mettre dans .env (gardés au chaud d'ici là) : CALENDLY_TOKEN, mot de passe
-     boîte (SMTP_PASSWORD/IMAP_PASSWORD), REASSURANCE_RGE/DECENNALE/NB_CHANTIERS.
-  3. Mettre web/desinscription.html en ligne chez Infomaniak (→ OPTOUT_URL).
-  4. Vérifier DKIM Infomaniak + mail-tester ≥ 9/10 (A5).
-  5. UI GitHub : supprimer les branches mergées/obsolètes (proxy bloque la suppression).
+SETUP EN COURS — PC de Paul (Windows) — session 2026-06-16(b) :
+  - ✅ Python 3.14.6 + Git installés ; repo cloné dans C:\Users\User\DATARENO-.
+  - ⚠️ Branche par défaut du dépôt GitHub = ANCIENNE (HEAD≠main → clone donne 93 tests).
+    Contournement appliqué : `git checkout main` (puis 177 tests verts). À CORRIGER :
+    GitHub → Settings → Branches → default = main (+ supprimer claude/intelligent-brahmagupta-*).
+  - ✅ venv + deps OK, 177 tests verts. Panneau lancé (localhost:8765), cockpit visible (NO-GO normal).
+  - .env créé/rempli : SENDER_NAME=Réno à domicile, SENDER_EMAIL/UNSUBSCRIBE/OPTOUT
+    (=https://renoadomicile.fr/desinscription.html — page PAS encore en ligne), CALENDLY_URL,
+    RGE+DECENNALE remplis, NB_CHANTIERS VIDE (omis proprement = OK), WEB_USER/WEB_PASSWORD posés.
+    SMTP/IMAP/CALENDLY_TOKEN laissés VIDES → simulation (sûr, rien ne part).
+  - ✅ Fichier contacts déposé : data\DATA_RENO_1EUROS_PROPRE.(xlsx ?) — extension à confirmer (`dir data`).
+  - 🔒 RGPD : Paul a proposé d'envoyer le fichier PII → REFUSÉ (reste sur sa machine). À maintenir.
 
-TODO CODE PROMIS (pour le workflow 100 % navigateur, sans CLI) :
-  - Ajouter un bouton « Importer la base (CSV) » dans le panneau (src.web) → charger les
-    5 200 contacts depuis le navigateur (aujourd'hui c'est python -m src.tri/db en CLI).
+⏭️ REPRENDRE ICI (Étape 6) — sur le PC, dans C:\Users\User\DATARENO- :
+     .venv\Scripts\python.exe -m src.tri "data\DATA_RENO_1EUROS_PROPRE.xlsx" --outdir out
+     .venv\Scripts\python.exe -m src.db --db out/state.sqlite init
+     .venv\Scripts\python.exe -m src.db --db out/state.sqlite import out/segments
+     .venv\Scripts\python.exe -m src.db --db out/state.sqlite hygiene
+     .venv\Scripts\python.exe -m src.drafts --db out/state.sqlite generate
+     .venv\Scripts\python.exe -m src.sequence --db out/state.sqlite plan
+   → attendu ~5 200 emailables / ~15 600 messages programmés ; relancer `python -m src.web`
+     → cockpit PLEIN (file d'envois + leads). NB : drafts OK car CALENDLY_URL+OPTOUT+RGE+décennale
+     remplis (sinon placeholders → drafts bloqués).
+   PUIS Étape 7 : `bash deploy/serve_public.sh` (Git Bash + cloudflared) → URL tél + auth.
+
+ENCORE À FAIRE avant le VRAI envoi (hors setup) :
+  - Générer CALENDLY_TOKEN (scopes read scheduled_events/invitees/user) → .env.
+  - Ajouter SMTP/IMAP Infomaniak (mdp boîte) dans .env quand prêt (sort de la simulation).
+  - Mettre web/desinscription.html EN LIGNE (Infomaniak) → OPTOUT_URL réel cliquable.
+  - DKIM Infomaniak + mail-tester ≥ 9/10 (A5). NB_CHANTIERS quand connu.
+  - preflight check → GO, puis micro-lot 25 (LAUNCH.md).
+  - GitHub : corriger branche par défaut (main) + supprimer branches obsolètes.
+
+TODO CODE PROMIS (workflow 100 % navigateur) :
+  - Bouton « Importer la base (CSV) » dans le panneau (src.web) → charger la base depuis
+    le navigateur (aujourd'hui = python -m src.tri/db en CLI).
 
 CHANTIERS DE RAFFINEMENT (l'outil tourne déjà sans ; par valeur) :
   a) Micro-lot test 20-30 en réel après gate GO (outillé : daily run --limit ; LAUNCH.md).
