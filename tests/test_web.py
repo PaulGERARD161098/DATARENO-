@@ -137,3 +137,67 @@ def test_load_env_n_ecrase_pas(tmp_path: Path, monkeypatch):
     C.load_env(env)
     import os
     assert os.environ["FOO_Y"] == "existant"  # l'existant prime
+
+
+# --- Import de la base depuis le navigateur (upload multipart) ----------------
+
+_CSV_SAMPLE = (
+    "Joignable,Nom,Email,Tel_national,Tel_E164,CP,Dept,Chauffage,Surface,Campagne,Date,Token\n"
+    "Email + Tel,Jean Test,jean.test@example.fr,06 00 00 00 01,+33600000001,75011,75,GAZ,50 - 110 m2,camp-A,2023-09-22,t1\n"
+    "Email + Tel,Marie Demo,marie.demo@example.fr,06 00 00 00 02,+33600000002,69003,69,ÉLECTRICITÉ,110-160 m2,camp-A,2023-10-01,t2\n"
+    "Tel seul,Sans Mail,,06 00 00 00 03,+33600000003,13001,13,BOIS,50 - 110 m2,camp-B,2023-11-01,t3\n"
+)
+
+
+def _multipart(action: str, filename: str, content: bytes) -> tuple[bytes, str]:
+    boundary = "X-BOUND-123"
+    crlf = "\r\n"
+    head = (
+        f"--{boundary}{crlf}"
+        f'Content-Disposition: form-data; name="action"{crlf}{crlf}{action}{crlf}'
+        f"--{boundary}{crlf}"
+        f'Content-Disposition: form-data; name="basefile"; filename="{filename}"{crlf}'
+        f"Content-Type: text/csv{crlf}{crlf}"
+    ).encode("utf-8")
+    tail = f"{crlf}--{boundary}--{crlf}".encode("utf-8")
+    body = head + content + tail
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
+def test_parse_multipart_extrait_champ_et_fichier():
+    body, ctype = _multipart("import", "base.csv", _CSV_SAMPLE.encode("utf-8"))
+    fields, files = web.parse_multipart(body, ctype)
+    assert fields["action"] == "import"
+    assert "basefile" in files
+    assert files["basefile"][0] == "base.csv"
+    assert files["basefile"][1] == _CSV_SAMPLE.encode("utf-8")
+
+
+def test_import_base_deroule_le_pipeline(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("OPTOUT_URL", raising=False)  # isole du .env local
+    conn = db.connect(tmp_path / "imp.sqlite")
+    db.init_db(conn)
+    r = web.import_base(conn, _CSV_SAMPLE.encode("utf-8"), "base.csv")
+    assert r["ok"] is True
+    # 2 emailables (GAZ→AIR_EAU, ÉLEC→AIR_AIR) ; le « Tel seul » est exclu.
+    assert r["emailables"] == 2
+    assert r["scheduled"] == 6  # 2 contacts × 3 touches J0/J+4/J+8
+    # Idempotent : ré-import ne crée pas de doublon.
+    r2 = web.import_base(conn, _CSV_SAMPLE.encode("utf-8"), "base.csv")
+    assert r2["inserted"] == 0
+    conn.close()
+
+
+def test_import_base_refuse_format_inconnu(tmp_path: Path):
+    conn = db.connect(tmp_path / "imp2.sqlite")
+    db.init_db(conn)
+    r = web.import_base(conn, b"nimporte", "base.txt")
+    assert r["ok"] is False
+    conn.close()
+
+
+def test_action_import_sans_fichier(tmp_path: Path):
+    conn = _seed(tmp_path)
+    msg = web.action_import(conn, {})
+    assert "Aucun fichier" in msg
+    conn.close()
