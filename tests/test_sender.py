@@ -84,6 +84,83 @@ def test_export_transport_ecrit_eml(tmp_path: Path):
     conn.close()
 
 
+def test_placeholder_bloque_envoi(tmp_path: Path):
+    conn = _seed(tmp_path, 1)
+    # Injecte un opt-out factice dans le seul message dû.
+    conn.execute("UPDATE messages SET body='Corps [LIEN_DESINSCRIPTION]'")
+    conn.commit()
+    sent: list[str] = []
+    r = sender.send_due(
+        conn, D, transport=lambda e, s, b: sent.append(e) or True,
+        confirm=True, caps=(10, 10, 10),
+    )
+    assert r["sent"] == 0
+    assert r["skipped_placeholder"] == 1
+    assert sent == []
+    conn.close()
+
+
+def test_smtp_transport_starttls_et_unsubscribe(monkeypatch, tmp_path: Path):
+    captured: dict[str, object] = {}
+
+    class DummySMTP:
+        def __init__(self, host, port, timeout=None):
+            captured["host"], captured["port"] = host, port
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def starttls(self, context=None):
+            captured["tls"] = True
+
+        def login(self, u, p):
+            captured["login"] = (u, p)
+
+        def send_message(self, msg):
+            captured["msg"] = msg
+
+    monkeypatch.setattr(sender.smtplib, "SMTP", DummySMTP)
+    monkeypatch.setenv("SMTP_HOST", "smtp.test")
+    monkeypatch.setenv("SMTP_PORT", "587")
+    monkeypatch.setenv("SMTP_FROM", "Paul <a@b.fr>")
+    monkeypatch.setenv("SMTP_USER", "u")
+    monkeypatch.setenv("SMTP_PASS", "p")
+    monkeypatch.setenv("OPTOUT_URL", "https://x/optout")
+
+    transport = sender.smtp_transport()
+    assert transport("dest@b.fr", "Objet", "Corps") is True
+    assert captured["tls"] is True
+    assert captured["login"] == ("u", "p")
+    msg = captured["msg"]
+    assert msg["To"] == "dest@b.fr"
+    assert msg["From"] == "Paul <a@b.fr>"
+    assert msg["List-Unsubscribe"] == "<https://x/optout>"
+
+
+def test_smtp_transport_non_configure_leve(monkeypatch):
+    monkeypatch.delenv("SMTP_HOST", raising=False)
+    monkeypatch.delenv("SMTP_FROM", raising=False)
+    monkeypatch.delenv("SMTP_USER", raising=False)
+    import pytest
+
+    with pytest.raises(ValueError):
+        sender.smtp_transport()
+
+
+def test_smtp_transport_echec_renvoie_false(monkeypatch):
+    def boom(*a, **k):
+        raise OSError("connexion refusée")
+
+    monkeypatch.setattr(sender.smtplib, "SMTP", boom)
+    monkeypatch.setenv("SMTP_HOST", "smtp.test")
+    monkeypatch.setenv("SMTP_FROM", "a@b.fr")
+    transport = sender.smtp_transport()
+    assert transport("dest@b.fr", "Objet", "Corps") is False
+
+
 def test_ingestion_bounce_supprime(tmp_path: Path):
     conn = _seed(tmp_path, 1)
     r = sender.ingest_event(conn, "c0@b.fr", "bounce")

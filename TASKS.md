@@ -55,9 +55,15 @@ jamais été poussé dans ce dépôt).
 
 ## ✅ Phase 8 — Connecteur d'envoi (opérationnel)  *(LIVRÉ)*
 - `src/sender.py`. **Dry-run par défaut** ; envoi réel = `confirm=True` + transport explicite
-  (export `.eml` ou SMTP). Respecte suppression + plafond du jour ; event `sent` + statut `sent`.
+  (export `.eml` **ou SMTP domaine dédié**). Respecte suppression + plafond du jour ; event `sent` + statut `sent`.
   Ingestion `ingest_event` (open/reply/bounce/optout → arrêts auto). CLI `send`/`ingest`.
-- **Acceptation** : dry-run = 0 envoi ; envoi réel + event `sent` ; bounce → suppression.
+- **Transport SMTP** (`smtp_transport`, flag `--smtp`) : secrets via `.env` (`SMTP_*`),
+  TLS forcé (STARTTLS/465), en-tête `List-Unsubscribe` auto. Échec d'envoi ≠ crash batch.
+- **Garde-fou anti-placeholder** : aucun message contenant un placeholder non résolu
+  (opt-out / Calendly / nom / réassurance) n'est jamais envoyé (`skipped_placeholder`).
+- `.env` **auto-chargé** (python-dotenv) à tout point d'entrée ; tests isolés du `.env` local.
+- **Acceptation** : dry-run = 0 envoi ; envoi réel + event `sent` ; bounce → suppression ;
+  placeholder non résolu → bloqué (testé).
 
 ## ✅ Phase 9 — Dashboard HTML local  *(LIVRÉ, optionnel)*
 - `src/dashboard.py`. HTML statique (funnel, segments, statuts, file de validation), lecture SQLite.

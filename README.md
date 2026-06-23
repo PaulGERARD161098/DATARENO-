@@ -25,8 +25,9 @@ avec **clic humain pour envoyer/booker**. Autonome (SQLite local), hors stack R�
    python -m src.sequence --db out/state.sqlite plan
    python -m src.sequence --db out/state.sqlite simulate --days 7
    # 5. Envoi — DRY-RUN par défaut ; envoi réel = --confirm + transport
-   python -m src.sender --db out/state.sqlite send                      # simulation
-   python -m src.sender --db out/state.sqlite send --confirm --export-dir out/outbox
+   python -m src.sender --db out/state.sqlite send --day-index 0        # simulation (J1 warm-up=30)
+   python -m src.sender --db out/state.sqlite send --confirm --smtp --day-index 0   # envoi réel domaine dédié
+   python -m src.sender --db out/state.sqlite send --confirm --export-dir out/outbox # ou export .eml
    # 6. Ingestion d'un retour (webhook/IMAP côté infra)
    python -m src.sender --db out/state.sqlite ingest <email> bounce
    # 7. Réponses (l'humain valide la classe proposée)
@@ -40,6 +41,16 @@ avec **clic humain pour envoyer/booker**. Autonome (SQLite local), hors stack R�
    python -m pytest -q && ruff check src tests
    ```
 4. `TASKS.md` = phases + critères · `ROADMAP.md` = chemin vers l'opérationnel · `SPEC.md` = contrat figé.
+
+### Lancer un envoi réel (jour J)
+- Le `.env` est **chargé automatiquement** (python-dotenv) — pas besoin de sourcer le shell.
+- **Pré-requis envoi réel** (sinon l'envoi est bloqué) :
+  - `OPTOUT_URL`, `SENDER_NAME`, réassurance (`REASSURANCE_*`) renseignés — sinon le
+    garde-fou anti-placeholder **refuse** tout message non finalisé (« bloqués placeholder »).
+  - SMTP du domaine dédié : `SMTP_HOST`, `SMTP_FROM`, `SMTP_USER`, `SMTP_PASS` (port 587 STARTTLS par défaut).
+- Warm-up : `--day-index 0` = J1 (plafond 30) · `1` = J2 (50) · `2`+ = plateau (100).
+  Le plafond du jour est appliqué sur le **total** d'envois `sent` du jour.
+- L'en-tête `List-Unsubscribe` est ajouté automatiquement à partir d'`OPTOUT_URL`.
 
 ## Structure
 ```

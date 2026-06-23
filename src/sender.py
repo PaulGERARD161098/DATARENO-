@@ -16,8 +16,12 @@ l'extérieur (webhook ESP ou poll IMAP — câblage = infra, hors de ce module).
 from __future__ import annotations
 
 import argparse
+import os
+import smtplib
 import sqlite3
+import ssl
 from datetime import date
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Callable
 
@@ -30,6 +34,19 @@ logger = get_logger("datareno.sender")
 
 # Un transport prend (email, subject, body) et renvoie True si l'envoi a réussi.
 Transport = Callable[[str, str, str], bool]
+
+# Marqueurs de placeholders non résolus : un message qui en contient n'est JAMAIS
+# envoyé (opt-out factice = illégal ; Calendly/nom/réassurance manquants = non conforme).
+PLACEHOLDER_MARKERS = (
+    "[LIEN_DESINSCRIPTION]",
+    "[VOTRE_LIEN_CALENDLY]",
+    "[VOTRE_NOM]",
+    "[réassurance à compléter",
+)
+
+
+def has_placeholder(text: str) -> bool:
+    return any(marker in text for marker in PLACEHOLDER_MARKERS)
 
 
 def due_messages(conn: sqlite3.Connection, on_date: date) -> list[sqlite3.Row]:
@@ -75,17 +92,24 @@ def send_due(
     dry_run = not (confirm and transport is not None)
 
     result = {"due": len(due), "cap": cap, "remaining_cap": remaining,
-              "sent": 0, "failed": 0, "skipped_cap": 0, "dry_run": int(dry_run)}
+              "sent": 0, "failed": 0, "skipped_cap": 0, "skipped_placeholder": 0,
+              "dry_run": int(dry_run)}
 
     if dry_run:
-        result["would_send"] = min(len(due), remaining)
+        sendable = [r for r in due if not has_placeholder(r["subject"] + r["body"])]
+        result["skipped_placeholder"] = len(due) - len(sendable)
+        result["would_send"] = min(len(sendable), remaining)
         logger.info("send dry-run", extra={"context": result})
         return result
 
     for row in due:
         if result["sent"] >= remaining:
-            result["skipped_cap"] = len(due) - result["sent"]
+            result["skipped_cap"] = len(due) - result["sent"] - result["skipped_placeholder"]
             break
+        # Garde-fou conformité : jamais d'envoi avec placeholder non résolu.
+        if has_placeholder(row["subject"] + row["body"]):
+            result["skipped_placeholder"] += 1
+            continue
         ok = False
         try:
             ok = transport(row["email"], row["subject"], row["body"])
@@ -127,6 +151,64 @@ def export_transport(outdir: str | Path) -> Transport:
     return _send
 
 
+def smtp_transport(
+    *,
+    host: str | None = None,
+    port: int | None = None,
+    user: str | None = None,
+    password: str | None = None,
+    sender: str | None = None,
+    use_ssl: bool | None = None,
+    optout_url: str | None = None,
+    timeout: float = 30.0,
+) -> Transport:
+    """Transport SMTP (domaine dédié). Lit les secrets via l'env si non fournis.
+
+    Env : SMTP_HOST, SMTP_PORT (587), SMTP_USER, SMTP_PASS, SMTP_FROM, SMTP_SSL.
+    TLS forcé (STARTTLS, ou SMTP_SSL/port 465). Ajoute l'en-tête List-Unsubscribe
+    (déliverabilité + conformité) depuis OPTOUT_URL. Aucun secret ni PII en log.
+    """
+    host = (host or os.getenv("SMTP_HOST", "")).strip()
+    port = port or int((os.getenv("SMTP_PORT", "587") or "587").strip())
+    user = user if user is not None else os.getenv("SMTP_USER", "").strip()
+    password = password if password is not None else os.getenv("SMTP_PASS", "")
+    sender = (sender or os.getenv("SMTP_FROM", "").strip() or user).strip()
+    if use_ssl is None:
+        use_ssl = os.getenv("SMTP_SSL", "").strip().lower() in {"1", "true", "yes"} or port == 465
+    optout_url = (optout_url if optout_url is not None else os.getenv("OPTOUT_URL", "")).strip()
+    if not host or not sender:
+        raise ValueError("SMTP non configuré : SMTP_HOST et SMTP_FROM (ou SMTP_USER) requis.")
+
+    def _send(email: str, subject: str, body: str) -> bool:
+        msg = EmailMessage()
+        msg["From"] = sender
+        msg["To"] = email
+        msg["Subject"] = subject
+        if optout_url:
+            msg["List-Unsubscribe"] = f"<{optout_url}>"
+            msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+        msg.set_content(body)
+        ctx = ssl.create_default_context()
+        try:
+            if use_ssl:
+                with smtplib.SMTP_SSL(host, port, timeout=timeout, context=ctx) as srv:
+                    if user:
+                        srv.login(user, password)
+                    srv.send_message(msg)
+            else:
+                with smtplib.SMTP(host, port, timeout=timeout) as srv:
+                    srv.starttls(context=ctx)
+                    if user:
+                        srv.login(user, password)
+                    srv.send_message(msg)
+            return True
+        except Exception:  # noqa: BLE001 — un envoi raté ne tue pas le batch ; pas de PII en log
+            logger.warning("échec SMTP", extra={"context": {"port": port, "ssl": int(use_ssl)}})
+            return False
+
+    return _send
+
+
 def ingest_event(
     conn: sqlite3.Connection, email: str, event_type: str, payload: str | None = None
 ) -> dict[str, object]:
@@ -160,6 +242,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("send", help="Envoie les messages dus (dry-run sauf --confirm).")
     s.add_argument("--confirm", action="store_true", help="Envoi réel (sinon simulation).")
     s.add_argument("--export-dir", default=None, help="Mode export .eml vers ce dossier.")
+    s.add_argument("--smtp", action="store_true", help="Transport SMTP (secrets via .env).")
     s.add_argument("--day-index", type=int, default=2, help="Position warm-up (0=J1).")
     i = sub.add_parser("ingest", help="Enregistre un retour externe.")
     i.add_argument("email")
@@ -171,18 +254,25 @@ def main(argv: list[str] | None = None) -> int:
     conn = _db.connect(args.db)
     try:
         if args.cmd == "send":
-            transport = export_transport(args.export_dir) if args.export_dir else None
+            if args.smtp:
+                transport = smtp_transport()
+            elif args.export_dir:
+                transport = export_transport(args.export_dir)
+            else:
+                transport = None
             r = send_due(conn, on_date, transport, confirm=args.confirm, day_index=args.day_index)
             if r["dry_run"]:
                 print(  # noqa: T201
                     f"DRY-RUN — dus={r['due']} · enverrait={r.get('would_send', 0)} "
-                    f"(plafond restant {r['remaining_cap']}/{r['cap']}). Aucun envoi.\n"
-                    "Ajoutez --confirm + --export-dir (ou un transport SMTP) pour envoyer."
+                    f"(plafond restant {r['remaining_cap']}/{r['cap']}) · "
+                    f"bloqués placeholder={r['skipped_placeholder']}. Aucun envoi.\n"
+                    "Ajoutez --confirm + --smtp (domaine dédié) ou --export-dir pour envoyer."
                 )
             else:
                 print(  # noqa: T201
                     f"ENVOI — envoyés={r['sent']} · échecs={r['failed']} · "
-                    f"non envoyés (plafond)={r['skipped_cap']}"
+                    f"non envoyés (plafond)={r['skipped_cap']} · "
+                    f"bloqués placeholder={r['skipped_placeholder']}"
                 )
         elif args.cmd == "ingest":
             r = ingest_event(conn, args.email, args.type, args.payload)
