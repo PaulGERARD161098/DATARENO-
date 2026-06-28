@@ -466,8 +466,12 @@ def _make_handler(db_path: str, user: str = "", password: str = ""):
             length = int(self.headers.get("Content-Length", 0) or 0)
             ctype = self.headers.get("Content-Type", "")
             if length > MAX_UPLOAD_BYTES:
-                self._send_html(render_panel(_open_db(db_path),
-                                flash="⛔ Fichier trop volumineux (max 30 Mo)."), 413)
+                conn = _open_db(db_path)
+                try:
+                    self._send_html(render_panel(
+                        conn, flash="⛔ Fichier trop volumineux (max 30 Mo)."), 413)
+                finally:
+                    conn.close()
                 return
             raw = self.rfile.read(length)
             files: dict[str, tuple[str, bytes]] = {}
