@@ -4,6 +4,20 @@
 
 ---
 
+## 🟢 DERNIÈRE SESSION — 2026-06-28
+- **Piège branche re-confirmé** : la session web cloné l'ANCIENNE branche par défaut (93 tests)
+  au lieu de `main` (v1.4, 177→181 tests). → **CORRIGER : GitHub Settings → Branches → default = `main`**
+  (toujours pas fait). Réflexe d'ouverture : `git branch -a` + vérifier la default AVANT de coder.
+- **Livré & MERGÉ dans `main` (PR #17)** : bouton **« Importer la base »** dans le cockpit
+  (`src.web`) → upload `.csv/.xlsx` depuis le navigateur → `tri→import→hygiène→séquence`,
+  aucun envoi, idempotent. Parseur multipart maison, cap 30 Mo. **181 tests verts, ruff clean.**
+- **Opt-out → Vercel (à faire par Paul, navigateur, sans CLI)** : vercel.com → Add New → Project →
+  importe le repo (branche `main`) → `vercel.json` publie `web/` → `OPTOUT_URL=https://<projet>.vercel.app/desinscription.html`.
+- **LE GATE du 100 % web reste l'HÉBERGEMENT du cockpit** (Paul n'a pas d'ordi) : Render
+  (`render.yaml`) ou tunnel depuis une petite machine. Le bouton import ne sert qu'une fois le cockpit hébergé.
+
+---
+
 ## 📋 PROMPT MAÎTRE DE REPRISE (à coller en ouverture)
 
 ```
