@@ -99,8 +99,14 @@ ENCORE À FAIRE avant le VRAI envoi (hors setup) :
   - GitHub : corriger branche par défaut (main) + supprimer branches obsolètes.
 
 TODO CODE PROMIS (workflow 100 % navigateur) :
-  - Bouton « Importer la base (CSV) » dans le panneau (src.web) → charger la base depuis
-    le navigateur (aujourd'hui = python -m src.tri/db en CLI).
+  - [FAIT 2026-06-23] Bouton « Importer la base » dans le cockpit (src.web) : upload
+    .csv/.xlsx depuis le navigateur → déroule tri → import → hygiène → séquence (aucun
+    envoi). Parseur multipart maison (cgi supprimé en 3.13). Cap 30 Mo. Tests : import_base
+    (pipeline + idempotence), parse_multipart, refus format/sans fichier. Plus besoin du CLI.
+  - RESTE pour le 100 % web : HÉBERGER le cockpit (Paul n'a pas d'ordi). Options navigateur :
+    Render (render.yaml présent ; free tier = SQLite éphémère, payant ~7 €/mois = disque UE
+    persistant) ou tunnel depuis une petite machine (deploy/serve_public.sh). Sans hôte,
+    le bouton import ne sert que sur une machine locale.
 
 CHANTIERS DE RAFFINEMENT (l'outil tourne déjà sans ; par valeur) :
   a) Micro-lot test 20-30 en réel après gate GO (outillé : daily run --limit ; LAUNCH.md).

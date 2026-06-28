@@ -20,11 +20,14 @@ import base64
 import hmac
 import html
 import os
+import re
 import sqlite3
+import tempfile
 import urllib.parse
 import webbrowser
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from . import calendly as _calendly
 from . import config as _C
@@ -35,8 +38,17 @@ from . import preflight as _preflight
 from . import replies as _replies
 from . import report as _report
 from . import scoring as _scoring
+from . import sequence as _sequence
+from . import tri as _tri
+from .logging_setup import get_logger
 from .sender import SmtpConfig, due_messages, send_one, smtp_transport
 from .templates import MessageContext
+
+logger = get_logger("datareno.web")
+
+# Taille max d'un upload de base (anti-abus mémoire). 5 200 lignes ≈ 1-2 Mo ; marge large.
+MAX_UPLOAD_BYTES = 30 * 1024 * 1024
+_IMPORT_SUFFIXES = {".csv", ".xlsx", ".xlsm"}
 
 _STYLE = (
     "body{font-family:system-ui,Arial,sans-serif;margin:0;background:#0f1115;color:#e7ebf0}"
@@ -134,6 +146,21 @@ def render_panel(conn: sqlite3.Connection, *, flash: str = "", on_date: date | N
         _kpi("Taux réponse", f"{kpis['taux_reponse_%']} %"),
     ])
 
+    # Importer la base (workflow 100 % navigateur) : upload → tri → drafts → séquence.
+    contacts_total = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
+    import_card = (
+        "<form method='post' action='/action' enctype='multipart/form-data'>"
+        "<input type='hidden' name='action' value='import'>"
+        "<div class='row'>"
+        "<input type='file' name='basefile' accept='.csv,.xlsx,.xlsm' required>"
+        "<button type='submit'>Importer la base</button>"
+        "</div>"
+        "<span class='muted'> Fichier contacts (.csv/.xlsx) → tri par chauffage, dédup, "
+        "hygiène, brouillons et séquence J0/J+4/J+8. Reste local, aucun envoi. "
+        f"Actuellement en base : {_esc(contacts_total)} contact(s).</span>"
+        "</form>"
+    )
+
     # Relever les retours (IMAP/Calendly) sans rien envoyer.
     poll_card = (
         "<form method='post' action='/action'>"
@@ -205,6 +232,8 @@ def render_panel(conn: sqlite3.Connection, *, flash: str = "", on_date: date | N
         f"Calendly {'✅' if cal_ready else '—'}</p>"
         f"{flash_html}"
         f"<div class='kpis'>{kpi_html}</div>"
+        "<h2>Importer la base de contacts</h2>"
+        f"<div class='card'>{import_card}</div>"
         f"<div class='card'>{poll_card}</div>"
         f"<h2>À envoyer aujourd'hui{send_note}</h2><div class='card'>{msg_cards}</div>"
         "<h2>Réponses à traiter</h2>"
@@ -218,6 +247,91 @@ def render_panel(conn: sqlite3.Connection, *, flash: str = "", on_date: date | N
         "<p class='muted'>Localhost uniquement — ne pas exposer (contient des données personnelles). "
         "Le cron quotidien et le détail restent en CLI.</p>"
         "</main></body></html>"
+    )
+
+
+def parse_multipart(body: bytes, content_type: str) -> tuple[dict[str, str], dict[str, tuple[str, bytes]]]:
+    """Parseur multipart/form-data minimal (cgi a disparu en 3.13).
+
+    Retourne (champs_texte, fichiers) où fichiers[name] = (filename, contenu_octets).
+    Tolérant : ignore les parties sans en-tête exploitable. Aucune dépendance externe.
+    """
+    m = re.search(r'boundary=(?:"([^"]+)"|([^;]+))', content_type)
+    if not m:
+        return {}, {}
+    boundary = ("--" + (m.group(1) or m.group(2)).strip()).encode()
+    fields: dict[str, str] = {}
+    files: dict[str, tuple[str, bytes]] = {}
+    for part in body.split(boundary):
+        part = part.lstrip(b"\r\n")  # retirer le CRLF en tête ; NE PAS toucher au contenu en queue
+        if not part or part.startswith(b"--") or b"\r\n\r\n" not in part:
+            continue
+        head, _, data = part.partition(b"\r\n\r\n")
+        headers = head.decode("utf-8", "replace")
+        dispo = next(
+            (ln for ln in headers.split("\r\n") if ln.lower().startswith("content-disposition")),
+            "",
+        )
+        name_m = re.search(r'name="([^"]*)"', dispo)
+        if not name_m:
+            continue
+        name = name_m.group(1)
+        if data.endswith(b"\r\n"):  # retirer UNIQUEMENT le CRLF délimiteur (pas le \n du contenu)
+            data = data[:-2]
+        fn_m = re.search(r'filename="([^"]*)"', dispo)
+        if fn_m is not None:
+            files[name] = (fn_m.group(1), data)
+        else:
+            fields[name] = data.decode("utf-8", "replace")
+    return fields, files
+
+
+def import_base(conn: sqlite3.Connection, file_bytes: bytes, filename: str) -> dict[str, object]:
+    """Charge un fichier contacts (.csv/.xlsx) et déroule tri → import → hygiène → séquence.
+
+    Tout reste local (la base ne sort pas). AUCUN envoi déclenché : on s'arrête à la
+    planification. Idempotent (ré-importer la même base ne crée pas de doublons).
+    """
+    suffix = Path(filename or "").suffix.lower()
+    if suffix not in _IMPORT_SUFFIXES:
+        return {"ok": False, "error": "format non supporté (attendu : .csv ou .xlsx)"}
+    if not file_bytes:
+        return {"ok": False, "error": "fichier vide"}
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / f"base{suffix}"
+        src.write_bytes(file_bytes)
+        outdir = Path(tmp) / "out"
+        try:
+            tri_res = _tri.run(src, outdir)
+        except Exception as exc:  # noqa: BLE001 — fichier hostile : message sûr, sans PII
+            logger.warning("import base : tri échoué", extra={"context": {"suffix": suffix}})
+            return {"ok": False, "error": f"lecture impossible : {type(exc).__name__}"}
+        imp = _db.import_segments(conn, outdir / "segments")
+        hyg = _db.purge_hygiene(conn)
+        plan = _sequence.plan_sequence(conn)
+    return {
+        "ok": True,
+        "total_rows": tri_res.total_rows,
+        "emailables": imp["total"],
+        "inserted": imp["inserted"],
+        "blacklist_hygiene": hyg.get("suppressed", 0),
+        "scheduled": plan.get("scheduled_messages", 0),
+        "horizon_days": plan.get("horizon_days", 0),
+    }
+
+
+def action_import(conn: sqlite3.Connection, files: dict[str, tuple[str, bytes]]) -> str:
+    """Action « Importer la base » du cockpit (upload navigateur)."""
+    if "basefile" not in files or not files["basefile"][1]:
+        return "Aucun fichier reçu. Choisis un .csv ou .xlsx puis réessaie."
+    filename, content = files["basefile"]
+    r = import_base(conn, content, filename)
+    if not r.get("ok"):
+        return f"⛔ Import refusé : {r.get('error')}"
+    return (
+        f"✅ Base importée : {r['emailables']} contact(s) emailable(s) "
+        f"(+{r['inserted']} nouveaux) · {r['blacklist_hygiene']} blacklistés (hygiène) · "
+        f"{r['scheduled']} message(s) programmé(s) sur {r['horizon_days']} j. Aucun envoi."
     )
 
 
@@ -349,12 +463,30 @@ def _make_handler(db_path: str, user: str = "", password: str = ""):
         def do_POST(self) -> None:  # noqa: N802
             if not self._guard():
                 return
-            length = int(self.headers.get("Content-Length", 0))
-            form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
-            action = form.get("action", [""])[0]
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            ctype = self.headers.get("Content-Type", "")
+            if length > MAX_UPLOAD_BYTES:
+                conn = _open_db(db_path)
+                try:
+                    self._send_html(render_panel(
+                        conn, flash="⛔ Fichier trop volumineux (max 30 Mo)."), 413)
+                finally:
+                    conn.close()
+                return
+            raw = self.rfile.read(length)
+            files: dict[str, tuple[str, bytes]] = {}
+            if ctype.startswith("multipart/form-data"):
+                fields, files = parse_multipart(raw, ctype)
+                action = fields.get("action", "")
+                form = {k: [v] for k, v in fields.items()}
+            else:
+                form = urllib.parse.parse_qs(raw.decode("utf-8"))
+                action = form.get("action", [""])[0]
             conn = _open_db(db_path)
             try:
-                if action == "poll":
+                if action == "import":
+                    flash = action_import(conn, files)
+                elif action == "poll":
                     flash = action_poll(conn)
                 elif action == "message":
                     mid = form.get("message_id", ["0"])[0]
