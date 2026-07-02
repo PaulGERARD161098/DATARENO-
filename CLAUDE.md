@@ -55,7 +55,7 @@ URL Calendly · URL opt-out · domaine d'envoi dédié · réassurance (RGE / d�
 ```
 pip install -r requirements.txt
 python -m src.tri data/base.csv --outdir out        # Phase 1 (faite)
-python -m pytest -q                                  # 31 tests
+python -m pytest -q                                  # suite complète (100+ tests)
 ```
 
 Voir `SPEC.md` (contrat de build figé) et `TASKS.md` (séquencement des phases).

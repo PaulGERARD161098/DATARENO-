@@ -45,6 +45,13 @@ Vue état pipeline + file de validation drafts/réponses (lecture SQLite).
 
 ---
 
+## 🔒 Sécurité (audit 2026-07-02 — voir AUDIT-2026-07-02.md)
+Failles fermées : S1 injection de formule CSV (exports) · S2 validation email à
+l'import DB · S3 anti header-injection .eml · S4 refus d'envoi réel si placeholders
+.env non résolus (opt-out RGPD) · S5 redaction PII récursive dans les logs.
+Reportés (raisons dans l'audit) : heuristique réponses substring, re-plan vs envois
+passés, zip-bomb XLSX. Rejouer l'audit avant tout branchement SMTP/IMAP réel.
+
 ## 🧰 Pré-lancement (hors code — à fournir / configurer)
 1. **Entrées métier** : assurance décennale, nombre de chantiers, URL Calendly, URL opt-out, nom expéditeur. → `.env`.
 2. **Domaine d'envoi dédié** + DNS **SPF / DKIM / DMARC** configurés ; warm-up réel respecté.

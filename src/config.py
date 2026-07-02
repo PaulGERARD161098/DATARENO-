@@ -83,6 +83,18 @@ def strip_accents(value: str) -> str:
     return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 
+# Une cellule commençant par l'un de ces caractères peut être interprétée comme
+# une formule par Excel/LibreOffice (injection via la base acquise, hostile par défaut).
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def excel_safe(value: object) -> object:
+    """Neutralise l'injection de formule tableur sur une valeur exportée en CSV."""
+    if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
 def normalize_chauffage(raw: str | None) -> str:
     """Normalise un libellé de chauffage : sans accents, majuscules, espaces compactés."""
     if raw is None:

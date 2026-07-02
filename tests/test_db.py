@@ -112,3 +112,36 @@ def test_fk_message_et_event(tmp_path: Path):
     assert conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
     conn.close()
+
+
+def test_import_ignore_email_invalide(tmp_path: Path):
+    """S2 : un email malformé dans un CSV de segments n'entre jamais en base."""
+    seg = tmp_path / "segments"
+    _make_segment(seg, C.SEGMENT_AIR_EAU, [
+        {"email": "ok@b.fr", "chauffage": "GAZ"},
+        {"email": "pas-un-email", "chauffage": "GAZ"},
+        {"email": "deux mots@b.fr", "chauffage": "GAZ"},
+    ])
+    conn = db.connect(tmp_path / "s.sqlite")
+    r = db.import_segments(conn, seg)
+    assert r["inserted"] == 1
+    assert r["skipped_invalid"] == 2
+    emails = [row["email"] for row in conn.execute("SELECT email FROM contacts")]
+    assert emails == ["ok@b.fr"]
+    conn.close()
+
+
+def test_stats_statuts_et_suppressions(tmp_path: Path):
+    """U4 : la CLI stats expose statuts contacts + suppressions."""
+    seg = _seed_segments(tmp_path)
+    conn = db.connect(tmp_path / "s.sqlite")
+    db.import_segments(conn, seg)
+    conn.execute("UPDATE contacts SET status='contacted' WHERE email='a@b.fr'")
+    conn.execute(
+        "INSERT INTO suppressions (email, reason, created_at) VALUES ('b@b.fr', 'stop', ?)",
+        (db._now(),),
+    )
+    conn.commit()
+    assert db.counts_by_status(conn) == {"new": 2, "contacted": 1}
+    assert db.suppressions_count(conn) == 1
+    conn.close()

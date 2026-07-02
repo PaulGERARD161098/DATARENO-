@@ -105,7 +105,7 @@ def export_mailmerge(
         writer = csv.DictWriter(fh, fieldnames=EXPORT_FIELDS)
         writer.writeheader()
         for r in rows:
-            writer.writerow({k: r[k] for k in EXPORT_FIELDS})
+            writer.writerow({k: C.excel_safe(r[k]) for k in EXPORT_FIELDS})
     logger.info("export mailmerge", extra={"context": {"position": position, "rows": len(rows)}})
     return len(rows)
 

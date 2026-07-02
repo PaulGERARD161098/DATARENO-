@@ -219,3 +219,26 @@ def test_lecture_xlsx_colonnes_reelles(tmp_path: Path):
     assert result.counts_by_segment[C.SEGMENT_AIR_EAU] == 1   # FIOUL avec email
     assert result.counts_by_segment[C.SEGMENT_AIR_AIR] == 1   # ÉLEC avec email
     assert result.counts_by_segment[C.SEGMENT_EXCLU] == 1     # GAZ sans email -> tel seul
+
+
+# --- S1 : injection de formule tableur ------------------------------------
+def test_export_neutralise_injection_formule(tmp_path: Path):
+    """Une valeur hostile commençant par '=' ne doit jamais sortir telle quelle en CSV."""
+    src = tmp_path / "base.csv"
+    src.write_text(
+        "email,chauffage,nom,campagne\n"
+        'evil@b.fr,GAZ,"=2+2","@SUM(A1)"\n',
+        encoding="utf-8",
+    )
+    run(src, tmp_path / "out", today=TODAY)
+    path = tmp_path / "out" / "segments" / f"{C.SEGMENT_AIR_EAU}.csv"
+    with path.open(encoding="utf-8", newline="") as fh:
+        row = next(csv.DictReader(fh))
+    assert row["nom"] == "'=2+2"
+    assert row["campagne"] == "'@SUM(A1)"
+
+
+def test_excel_safe_ne_touche_pas_les_valeurs_sures():
+    assert C.excel_safe("Dupont") == "Dupont"
+    assert C.excel_safe(120.0) == 120.0
+    assert C.excel_safe("") == ""

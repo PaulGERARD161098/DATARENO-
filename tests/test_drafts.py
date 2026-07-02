@@ -87,3 +87,22 @@ def test_export_mailmerge(tmp_path: Path):
     assert len(rows) == 3
     assert all("@" in r["email"] for r in rows)
     conn.close()
+
+
+def test_export_mailmerge_neutralise_injection_formule(tmp_path: Path):
+    """S1 : un nom hostile ('=…') est neutralisé dans l'export ESP."""
+    conn = db.connect(tmp_path / "s.sqlite")
+    db.init_db(conn)
+    now = db._now()
+    conn.execute(
+        "INSERT INTO contacts (email, nom, segment, created_at, updated_at) "
+        "VALUES ('evil@b.fr', '=cmd|calc!A0', 'AIR_EAU', ?, ?)", (now, now),
+    )
+    conn.commit()
+    drafts.generate_drafts(conn, position="J0")
+    out = tmp_path / "drafts.csv"
+    drafts.export_mailmerge(conn, out, position="J0")
+    with out.open(encoding="utf-8", newline="") as fh:
+        row = next(csv.DictReader(fh))
+    assert row["nom"].startswith("'=")
+    conn.close()

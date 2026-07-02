@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -150,6 +151,7 @@ def import_segments(
 
     before = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
     processed = 0
+    skipped_invalid = 0
     for segment in segments:
         path = segments_dir / f"{segment}.csv"
         if not path.exists():
@@ -158,6 +160,11 @@ def import_segments(
             for row in csv.DictReader(fh):
                 email = (row.get("email") or "").strip().lower()
                 if not email:
+                    continue
+                # Entrée hostile par défaut : re-validation du format même si le CSV
+                # vient du tri (fichier modifiable/forgeable entre les deux étapes).
+                if not re.match(C.EMAIL_REGEX, email):
+                    skipped_invalid += 1
                     continue
                 _upsert_contact(conn, row, segment, email)
                 processed += 1
@@ -169,6 +176,7 @@ def import_segments(
         "processed": processed,
         "inserted": inserted,
         "updated": processed - inserted,
+        "skipped_invalid": skipped_invalid,
         "total": after,
     }
     logger.info("import segments", extra={"context": result})
@@ -180,6 +188,22 @@ def counts_by_segment(conn: sqlite3.Connection) -> dict[str, int]:
         "SELECT segment, COUNT(*) AS c FROM contacts GROUP BY segment ORDER BY c DESC"
     )
     return {r["segment"]: r["c"] for r in cur.fetchall()}
+
+
+def counts_by_status(conn: sqlite3.Connection) -> dict[str, int]:
+    cur = conn.execute(
+        "SELECT status, COUNT(*) AS c FROM contacts GROUP BY status ORDER BY c DESC"
+    )
+    return {r["status"]: r["c"] for r in cur.fetchall()}
+
+
+def suppressions_count(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='suppressions'"
+    ).fetchone()
+    if not row[0]:
+        return 0
+    return conn.execute("SELECT COUNT(*) FROM suppressions").fetchone()[0]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -203,7 +227,8 @@ def main(argv: list[str] | None = None) -> int:
             r = import_segments(conn, args.segments_dir, segments)
             print(  # noqa: T201
                 f"Import OK — traités={r['processed']} · insérés={r['inserted']} · "
-                f"mis à jour={r['updated']} · total en base={r['total']}"
+                f"mis à jour={r['updated']} · emails invalides ignorés={r['skipped_invalid']} · "
+                f"total en base={r['total']}"
             )
         elif args.cmd == "stats":
             counts = counts_by_segment(conn)
@@ -211,6 +236,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Contacts en base : {total}")  # noqa: T201
             for seg, c in counts.items():
                 print(f"  {seg:24}: {c}")  # noqa: T201
+            print("Contacts par statut :")  # noqa: T201
+            for status, c in counts_by_status(conn).items():
+                print(f"  {status:24}: {c}")  # noqa: T201
+            print(f"Suppressions (stop/bounce/optout) : {suppressions_count(conn)}")  # noqa: T201
     finally:
         conn.close()
     return 0

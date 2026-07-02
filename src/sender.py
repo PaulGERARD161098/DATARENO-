@@ -25,18 +25,33 @@ from . import db as _db
 from . import replies as _replies
 from .logging_setup import get_logger
 from .sequence import cap_for_day, warmup_caps
+from .templates import MessageContext
 
 logger = get_logger("datareno.sender")
 
 # Un transport prend (email, subject, body) et renvoie True si l'envoi a réussi.
 Transport = Callable[[str, str, str], bool]
 
+# Placeholders par défaut des templates : leur présence signifie que .env est
+# incomplet. Envoyer un tel message = opt-out non fonctionnel (RGPD) → refus.
+_PLACEHOLDERS = (
+    MessageContext.calendly_url,
+    MessageContext.optout_url,
+    MessageContext.sender_name,
+    MessageContext.reassurance,
+)
+
+
+def _has_placeholder(subject: str | None, body: str | None) -> bool:
+    text = (subject or "") + "\n" + (body or "")
+    return any(p in text for p in _PLACEHOLDERS)
+
 
 def due_messages(conn: sqlite3.Connection, on_date: date) -> list[sqlite3.Row]:
     """Messages programmés dus à `on_date` (inclus), contact non supprimé."""
     return conn.execute(
         """
-        SELECT m.id AS message_id, m.contact_id, m.subject, m.body, c.email
+        SELECT m.id AS message_id, m.contact_id, m.subject, m.body, m.scheduled_at, c.email
         FROM messages m JOIN contacts c ON c.id = m.contact_id
         WHERE m.status = 'scheduled' AND m.scheduled_at <= ?
           AND c.email NOT IN (SELECT email FROM suppressions)
@@ -53,6 +68,19 @@ def _sent_today(conn: sqlite3.Connection, on_date: date) -> int:
     ).fetchone()[0]
 
 
+def infer_day_index(conn: sqlite3.Connection, on_date: date) -> int:
+    """Position warm-up = nb de jours distincts ayant déjà eu des envois avant `on_date`.
+
+    Aucun historique → 0 (J1, plafond bas) : le warm-up est respecté par défaut,
+    sans que l'opérateur ait à connaître son jour de montée en charge.
+    """
+    return conn.execute(
+        "SELECT COUNT(DISTINCT substr(created_at,1,10)) FROM events "
+        "WHERE type='sent' AND substr(created_at,1,10) < ?",
+        (on_date.isoformat(),),
+    ).fetchone()[0]
+
+
 def send_due(
     conn: sqlite3.Connection,
     on_date: date | None = None,
@@ -60,14 +88,17 @@ def send_due(
     *,
     confirm: bool = False,
     caps: tuple[int, int, int] | None = None,
-    day_index: int = 2,
+    day_index: int | None = None,
 ) -> dict[str, int]:
     """Envoie les messages dus (si confirm + transport), sinon simule (dry-run).
 
-    `day_index` situe `on_date` dans le warm-up (0 = J1). Par défaut 2 (plateau).
+    `day_index` situe `on_date` dans le warm-up (0 = J1). Par défaut, déduit de
+    l'historique d'envoi (`infer_day_index`) : jamais de plateau par oubli.
     """
     on_date = on_date or date.today()
     caps = caps or warmup_caps()
+    if day_index is None:
+        day_index = infer_day_index(conn, on_date)
     cap = cap_for_day(day_index, caps)
     remaining = max(0, cap - _sent_today(conn, on_date))
 
@@ -75,7 +106,8 @@ def send_due(
     dry_run = not (confirm and transport is not None)
 
     result = {"due": len(due), "cap": cap, "remaining_cap": remaining,
-              "sent": 0, "failed": 0, "skipped_cap": 0, "dry_run": int(dry_run)}
+              "sent": 0, "failed": 0, "skipped_cap": 0, "skipped_placeholder": 0,
+              "dry_run": int(dry_run)}
 
     if dry_run:
         result["would_send"] = min(len(due), remaining)
@@ -84,8 +116,15 @@ def send_due(
 
     for row in due:
         if result["sent"] >= remaining:
-            result["skipped_cap"] = len(due) - result["sent"]
+            attempted = result["sent"] + result["failed"] + result["skipped_placeholder"]
+            result["skipped_cap"] = len(due) - attempted
             break
+        if _has_placeholder(row["subject"], row["body"]):
+            result["skipped_placeholder"] += 1
+            logger.warning("message à placeholder non résolu refusé", extra={"context": {
+                "message_id": row["message_id"],
+            }})
+            continue
         ok = False
         try:
             ok = transport(row["email"], row["subject"], row["body"])
@@ -117,6 +156,11 @@ def export_transport(outdir: str | Path) -> Transport:
     counter = {"i": 0}
 
     def _send(email: str, subject: str, body: str) -> bool:
+        # Anti header-injection : un email porteur de CR/LF est refusé (données DB
+        # considérées non sûres) ; les retours ligne d'un sujet sont repliés.
+        if "\r" in email or "\n" in email:
+            return False
+        subject = " ".join((subject or "").splitlines())
         counter["i"] += 1
         path = out / f"{counter['i']:06d}.eml"
         path.write_text(
@@ -160,7 +204,8 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("send", help="Envoie les messages dus (dry-run sauf --confirm).")
     s.add_argument("--confirm", action="store_true", help="Envoi réel (sinon simulation).")
     s.add_argument("--export-dir", default=None, help="Mode export .eml vers ce dossier.")
-    s.add_argument("--day-index", type=int, default=2, help="Position warm-up (0=J1).")
+    s.add_argument("--day-index", type=int, default=None,
+                   help="Position warm-up (0=J1). Défaut : déduite de l'historique d'envoi.")
     i = sub.add_parser("ingest", help="Enregistre un retour externe.")
     i.add_argument("email")
     i.add_argument("type", choices=("open", "reply", "bounce", "optout", "click"))
@@ -168,6 +213,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     on_date = date.fromisoformat(args.date) if args.date else date.today()
+    if args.cmd == "send" and args.confirm and not args.export_dir:
+        # Sans transport, --confirm retomberait silencieusement en dry-run :
+        # l'opérateur croirait avoir envoyé. On refuse explicitement.
+        parser.error("--confirm exige un transport : ajoutez --export-dir (export .eml).")
     conn = _db.connect(args.db)
     try:
         if args.cmd == "send":
@@ -182,7 +231,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(  # noqa: T201
                     f"ENVOI — envoyés={r['sent']} · échecs={r['failed']} · "
-                    f"non envoyés (plafond)={r['skipped_cap']}"
+                    f"non envoyés (plafond)={r['skipped_cap']} · "
+                    f"refusés (placeholder .env manquant)={r['skipped_placeholder']}"
                 )
         elif args.cmd == "ingest":
             r = ingest_event(conn, args.email, args.type, args.payload)

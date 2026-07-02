@@ -86,17 +86,26 @@ SEGMENT_PITCH = {
     C.SEGMENT_AIR_EAU_A_QUALIFIER: "l'étude d'une pompe à chaleur air-eau adaptée à votre chauffage actuel",
 }
 
+# 🏷️ v1 (archivée — règle versioning, cf. CLAUDE.md) :
+#   SUBJECTS v1 :
+#     J0: "On reprend votre projet de chauffage ?"
+#     J4: "Les aides pour votre pompe à chaleur, pendant qu'elles sont ouvertes"
+#     J8: "Dernier message au sujet de votre projet de pompe à chaleur"
+#   Corps v1 : voir git (commit S1-S5 et antérieurs). Différences v2 : accroche J0
+#   contextualisée (projet en suspens), J4 sans « Petit suivi » + bénéfice concret
+#   du RDV, J8 raccourci ; phrases plus courtes, mêmes garde-fous (0 chiffre,
+#   1 CTA Calendly, opt-out, « RDV sous 48h » jamais « installation 48h »).
 SUBJECTS = {
-    "J0": "On reprend votre projet de chauffage ?",
-    "J4": "Les aides pour votre pompe à chaleur, pendant qu'elles sont ouvertes",
+    "J0": "Votre projet de chauffage — toujours d'actualité ?",
+    "J4": "Aides à la rénovation : le bon moment pour vérifier votre éligibilité",
     "J8": "Dernier message au sujet de votre projet de pompe à chaleur",
 }
 
 _BODY_J0 = """Bonjour{prenom},
 
-Vous nous aviez sollicités au sujet de votre chauffage. Votre logement dans le {dept} reste tout à fait pertinent pour {pitch}.
+Vous nous aviez sollicités au sujet du chauffage de votre logement dans le {dept}. Si le projet est resté en suspens, il n'a rien perdu de sa pertinence : votre situation se prête toujours à {pitch}.
 
-Vous êtes potentiellement éligible aux aides à la rénovation énergétique. Le plus simple est d'en parler quelques minutes avec un expert CVC, qui fait le point sur votre situation — sans engagement.
+Vous êtes potentiellement éligible aux aides à la rénovation énergétique. Pour le vérifier, le plus simple est un échange de quelques minutes avec un expert CVC : il fait le point sur votre logement et vos options, sans engagement.
 
 Réservez le créneau qui vous arrange : {calendly}
 
@@ -109,9 +118,9 @@ Pour ne plus recevoir nos messages : {optout}"""
 
 _BODY_J4 = """Bonjour{prenom},
 
-Petit suivi concernant votre projet de chauffage. Les dispositifs d'aide à la rénovation évoluent régulièrement : vérifier votre éligibilité maintenant évite de passer à côté d'une fenêtre favorable pour {pitch}.
+Je reviens vers vous au sujet de votre projet de chauffage. Les dispositifs d'aide à la rénovation énergétique évoluent régulièrement : vérifier votre éligibilité maintenant, c'est choisir votre calendrier au lieu de le subir, pour {pitch}.
 
-Un expert CVC peut vous recevoir en RDV sous 48h pour faire le point.
+Concrètement : un expert CVC vous reçoit en RDV sous 48h, fait le point sur votre situation et vous dit à quoi vous pouvez prétendre. Sans engagement.
 
 Choisissez votre créneau ici : {calendly}
 
@@ -124,7 +133,7 @@ Pour ne plus recevoir nos messages : {optout}"""
 
 _BODY_J8 = """Bonjour{prenom},
 
-Je me permets un dernier message au sujet de votre projet dans le {dept}. Si {pitch} vous intéresse toujours, l'échange avec un expert CVC reste la meilleure façon d'y voir clair.
+Je me permets un dernier message au sujet de votre projet dans le {dept}. Si {pitch} reste dans un coin de votre tête, l'échange avec un expert CVC est la façon la plus rapide d'y voir clair — et de savoir si les aides actuelles jouent en votre faveur.
 
 Sans retour de votre part, je ne vous solliciterai plus.
 
