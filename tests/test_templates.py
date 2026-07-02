@@ -102,3 +102,9 @@ def test_from_env_compose_reassurance(monkeypatch):
     assert "1200 chantiers" in ctx.reassurance
     # même avec la réassurance remplie, aucun claim interdit n'est introduit.
     assert lint_claims(ctx.reassurance) == []
+
+
+def test_v2_objets_distincts_par_position():
+    """U7 : trois objets distincts (A/B par objet exige la différenciation)."""
+    from src.templates import SUBJECTS
+    assert len(set(SUBJECTS.values())) == 3
