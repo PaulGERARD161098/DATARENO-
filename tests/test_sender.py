@@ -155,7 +155,6 @@ def test_day_index_deduit_de_l_historique(tmp_path: Path):
     r = sender.send_due(conn, D, caps=(2, 3, 100))  # dry-run, day_index non fourni
     assert r["cap"] == 2  # aucun envoi passé → J1
     # Historique : envois sur 2 jours distincts avant D → 3e jour = plateau.
-    now = db._now()
     cid = conn.execute("SELECT id FROM contacts LIMIT 1").fetchone()["id"]
     for d in ("2026-01-08", "2026-01-09"):
         conn.execute(
