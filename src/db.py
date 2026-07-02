@@ -190,6 +190,22 @@ def counts_by_segment(conn: sqlite3.Connection) -> dict[str, int]:
     return {r["segment"]: r["c"] for r in cur.fetchall()}
 
 
+def counts_by_status(conn: sqlite3.Connection) -> dict[str, int]:
+    cur = conn.execute(
+        "SELECT status, COUNT(*) AS c FROM contacts GROUP BY status ORDER BY c DESC"
+    )
+    return {r["status"]: r["c"] for r in cur.fetchall()}
+
+
+def suppressions_count(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='suppressions'"
+    ).fetchone()
+    if not row[0]:
+        return 0
+    return conn.execute("SELECT COUNT(*) FROM suppressions").fetchone()[0]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="État SQLite du pipeline DATA RÉNO.")
     parser.add_argument("--db", default=DEFAULT_DB, help=f"Chemin SQLite (défaut: {DEFAULT_DB}).")
@@ -220,6 +236,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Contacts en base : {total}")  # noqa: T201
             for seg, c in counts.items():
                 print(f"  {seg:24}: {c}")  # noqa: T201
+            print("Contacts par statut :")  # noqa: T201
+            for status, c in counts_by_status(conn).items():
+                print(f"  {status:24}: {c}")  # noqa: T201
+            print(f"Suppressions (stop/bounce/optout) : {suppressions_count(conn)}")  # noqa: T201
     finally:
         conn.close()
     return 0

@@ -129,3 +129,19 @@ def test_import_ignore_email_invalide(tmp_path: Path):
     emails = [row["email"] for row in conn.execute("SELECT email FROM contacts")]
     assert emails == ["ok@b.fr"]
     conn.close()
+
+
+def test_stats_statuts_et_suppressions(tmp_path: Path):
+    """U4 : la CLI stats expose statuts contacts + suppressions."""
+    seg = _seed_segments(tmp_path)
+    conn = db.connect(tmp_path / "s.sqlite")
+    db.import_segments(conn, seg)
+    conn.execute("UPDATE contacts SET status='contacted' WHERE email='a@b.fr'")
+    conn.execute(
+        "INSERT INTO suppressions (email, reason, created_at) VALUES ('b@b.fr', 'stop', ?)",
+        (db._now(),),
+    )
+    conn.commit()
+    assert db.counts_by_status(conn) == {"new": 2, "contacted": 1}
+    assert db.suppressions_count(conn) == 1
+    conn.close()
