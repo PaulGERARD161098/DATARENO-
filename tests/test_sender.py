@@ -147,3 +147,23 @@ def test_cli_confirm_sans_transport_erreur(tmp_path: Path, capsys):
         sender.main(["--db", str(tmp_path / "s.sqlite"), "send", "--confirm"])
     assert exc.value.code == 2
     assert "transport" in capsys.readouterr().err
+
+
+def test_day_index_deduit_de_l_historique(tmp_path: Path):
+    """U2 : sans historique d'envoi → J1 (plafond bas), jamais le plateau par oubli."""
+    conn = _seed(tmp_path, 5)
+    r = sender.send_due(conn, D, caps=(2, 3, 100))  # dry-run, day_index non fourni
+    assert r["cap"] == 2  # aucun envoi passé → J1
+    # Historique : envois sur 2 jours distincts avant D → 3e jour = plateau.
+    now = db._now()
+    cid = conn.execute("SELECT id FROM contacts LIMIT 1").fetchone()["id"]
+    for d in ("2026-01-08", "2026-01-09"):
+        conn.execute(
+            "INSERT INTO events (contact_id, type, created_at) VALUES (?, 'sent', ?)",
+            (cid, f"{d}T09:00:00+00:00"),
+        )
+    conn.commit()
+    assert sender.infer_day_index(conn, D) == 2
+    r2 = sender.send_due(conn, D, caps=(2, 3, 100))
+    assert r2["cap"] == 100
+    conn.close()
