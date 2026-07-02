@@ -112,3 +112,20 @@ def test_fk_message_et_event(tmp_path: Path):
     assert conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
     conn.close()
+
+
+def test_import_ignore_email_invalide(tmp_path: Path):
+    """S2 : un email malformé dans un CSV de segments n'entre jamais en base."""
+    seg = tmp_path / "segments"
+    _make_segment(seg, C.SEGMENT_AIR_EAU, [
+        {"email": "ok@b.fr", "chauffage": "GAZ"},
+        {"email": "pas-un-email", "chauffage": "GAZ"},
+        {"email": "deux mots@b.fr", "chauffage": "GAZ"},
+    ])
+    conn = db.connect(tmp_path / "s.sqlite")
+    r = db.import_segments(conn, seg)
+    assert r["inserted"] == 1
+    assert r["skipped_invalid"] == 2
+    emails = [row["email"] for row in conn.execute("SELECT email FROM contacts")]
+    assert emails == ["ok@b.fr"]
+    conn.close()
