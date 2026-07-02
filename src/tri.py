@@ -340,7 +340,7 @@ def _write_phone_csv(path: Path, rows: list[dict[str, str]]) -> None:
     with path.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=PHONE_FIELDS, extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows({k: C.excel_safe(v) for k, v in r.items()} for r in rows)
 
 
 def _write_segment_csv(path: Path, contacts: list[Contact]) -> None:
@@ -350,7 +350,7 @@ def _write_segment_csv(path: Path, contacts: list[Contact]) -> None:
         for c in contacts:
             row = c.model_dump()
             row["date_contact"] = c.date_contact.isoformat() if c.date_contact else ""
-            writer.writerow({k: row.get(k, "") for k in OUTPUT_FIELDS})
+            writer.writerow({k: C.excel_safe(row.get(k, "")) for k in OUTPUT_FIELDS})
 
 
 def _write_invalids_csv(
@@ -363,7 +363,7 @@ def _write_invalids_csv(
         for inv in invalids:
             record = {"line": inv.line, "reason": inv.reason}
             record.update(inv.raw)
-            writer.writerow(record)
+            writer.writerow({k: C.excel_safe(v) for k, v in record.items()})
 
 
 def _write_synthese_xlsx(
