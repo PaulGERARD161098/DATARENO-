@@ -167,3 +167,19 @@ def test_day_index_deduit_de_l_historique(tmp_path: Path):
     r2 = sender.send_due(conn, D, caps=(2, 3, 100))
     assert r2["cap"] == 100
     conn.close()
+
+
+def test_skipped_cap_exclut_les_echecs(tmp_path: Path):
+    """U5 : un échec d'envoi n'est pas compté comme « non envoyé plafond »."""
+    conn = _seed(tmp_path, 3)
+    calls = {"n": 0}
+
+    def flaky(email: str, subject: str, body: str) -> bool:
+        calls["n"] += 1
+        return calls["n"] != 1  # le premier envoi échoue
+
+    r = sender.send_due(conn, D, transport=flaky, confirm=True, caps=(1, 1, 1), day_index=0)
+    assert r["sent"] == 1
+    assert r["failed"] == 1
+    assert r["skipped_cap"] == 1  # 3 dus - 1 envoyé - 1 échec
+    conn.close()

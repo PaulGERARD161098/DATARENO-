@@ -51,7 +51,7 @@ def due_messages(conn: sqlite3.Connection, on_date: date) -> list[sqlite3.Row]:
     """Messages programmés dus à `on_date` (inclus), contact non supprimé."""
     return conn.execute(
         """
-        SELECT m.id AS message_id, m.contact_id, m.subject, m.body, c.email
+        SELECT m.id AS message_id, m.contact_id, m.subject, m.body, m.scheduled_at, c.email
         FROM messages m JOIN contacts c ON c.id = m.contact_id
         WHERE m.status = 'scheduled' AND m.scheduled_at <= ?
           AND c.email NOT IN (SELECT email FROM suppressions)
@@ -116,7 +116,8 @@ def send_due(
 
     for row in due:
         if result["sent"] >= remaining:
-            result["skipped_cap"] = len(due) - result["sent"]
+            attempted = result["sent"] + result["failed"] + result["skipped_placeholder"]
+            result["skipped_cap"] = len(due) - attempted
             break
         if _has_placeholder(row["subject"], row["body"]):
             result["skipped_placeholder"] += 1
