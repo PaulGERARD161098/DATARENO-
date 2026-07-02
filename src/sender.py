@@ -117,6 +117,11 @@ def export_transport(outdir: str | Path) -> Transport:
     counter = {"i": 0}
 
     def _send(email: str, subject: str, body: str) -> bool:
+        # Anti header-injection : un email porteur de CR/LF est refusé (données DB
+        # considérées non sûres) ; les retours ligne d'un sujet sont repliés.
+        if "\r" in email or "\n" in email:
+            return False
+        subject = " ".join((subject or "").splitlines())
         counter["i"] += 1
         path = out / f"{counter['i']:06d}.eml"
         path.write_text(

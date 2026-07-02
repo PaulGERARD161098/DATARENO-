@@ -98,3 +98,18 @@ def test_ingestion_contact_inconnu(tmp_path: Path):
     r = sender.ingest_event(conn, "inconnu@b.fr", "open")
     assert r["ok"] is False
     conn.close()
+
+
+def test_export_transport_refuse_crlf_dans_email(tmp_path: Path):
+    """S3 : un email porteur de CR/LF ne produit jamais de .eml (header injection)."""
+    transport = sender.export_transport(tmp_path / "outbox")
+    assert transport("a@b.fr\nBcc: spam@x.fr", "Objet", "Corps") is False
+    assert list((tmp_path / "outbox").glob("*.eml")) == []
+
+
+def test_export_transport_replie_sujet_multiligne(tmp_path: Path):
+    transport = sender.export_transport(tmp_path / "outbox")
+    assert transport("a@b.fr", "Objet\nX-Injecte: oui", "Corps") is True
+    content = next((tmp_path / "outbox").glob("*.eml")).read_text(encoding="utf-8")
+    assert "Subject: Objet X-Injecte: oui\n" in content
+    assert "\nX-Injecte" not in content
