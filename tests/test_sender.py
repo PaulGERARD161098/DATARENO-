@@ -113,3 +113,26 @@ def test_export_transport_replie_sujet_multiligne(tmp_path: Path):
     content = next((tmp_path / "outbox").glob("*.eml")).read_text(encoding="utf-8")
     assert "Subject: Objet X-Injecte: oui\n" in content
     assert "\nX-Injecte" not in content
+
+
+def test_envoi_reel_refuse_placeholders_non_resolus(tmp_path: Path):
+    """S4 : un message dont l'opt-out/CTA est resté en placeholder n'est jamais envoyé."""
+    conn = _seed(tmp_path, 0)
+    now = db._now()
+    conn.execute(
+        "INSERT INTO contacts (email, segment, status, created_at, updated_at) "
+        "VALUES ('p@b.fr', 'AIR_EAU', 'new', ?, ?)", (now, now),
+    )
+    cid = conn.execute("SELECT id FROM contacts WHERE email='p@b.fr'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO messages (contact_id, position, subject, body, status, scheduled_at, created_at) "
+        "VALUES (?, 'J0', 'Objet', 'Corps… [LIEN_DESINSCRIPTION]', 'scheduled', '2026-01-10', ?)",
+        (cid, now),
+    )
+    conn.commit()
+    r = sender.send_due(conn, D, transport=lambda e, s, b: True, confirm=True, caps=(10, 10, 10))
+    assert r["sent"] == 0
+    assert r["skipped_placeholder"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM messages WHERE status='sent'").fetchone()[0] == 0
+    conn.close()

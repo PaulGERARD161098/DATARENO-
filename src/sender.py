@@ -25,11 +25,26 @@ from . import db as _db
 from . import replies as _replies
 from .logging_setup import get_logger
 from .sequence import cap_for_day, warmup_caps
+from .templates import MessageContext
 
 logger = get_logger("datareno.sender")
 
 # Un transport prend (email, subject, body) et renvoie True si l'envoi a réussi.
 Transport = Callable[[str, str, str], bool]
+
+# Placeholders par défaut des templates : leur présence signifie que .env est
+# incomplet. Envoyer un tel message = opt-out non fonctionnel (RGPD) → refus.
+_PLACEHOLDERS = (
+    MessageContext.calendly_url,
+    MessageContext.optout_url,
+    MessageContext.sender_name,
+    MessageContext.reassurance,
+)
+
+
+def _has_placeholder(subject: str | None, body: str | None) -> bool:
+    text = (subject or "") + "\n" + (body or "")
+    return any(p in text for p in _PLACEHOLDERS)
 
 
 def due_messages(conn: sqlite3.Connection, on_date: date) -> list[sqlite3.Row]:
@@ -75,7 +90,8 @@ def send_due(
     dry_run = not (confirm and transport is not None)
 
     result = {"due": len(due), "cap": cap, "remaining_cap": remaining,
-              "sent": 0, "failed": 0, "skipped_cap": 0, "dry_run": int(dry_run)}
+              "sent": 0, "failed": 0, "skipped_cap": 0, "skipped_placeholder": 0,
+              "dry_run": int(dry_run)}
 
     if dry_run:
         result["would_send"] = min(len(due), remaining)
@@ -86,6 +102,12 @@ def send_due(
         if result["sent"] >= remaining:
             result["skipped_cap"] = len(due) - result["sent"]
             break
+        if _has_placeholder(row["subject"], row["body"]):
+            result["skipped_placeholder"] += 1
+            logger.warning("message à placeholder non résolu refusé", extra={"context": {
+                "message_id": row["message_id"],
+            }})
+            continue
         ok = False
         try:
             ok = transport(row["email"], row["subject"], row["body"])
@@ -187,7 +209,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(  # noqa: T201
                     f"ENVOI — envoyés={r['sent']} · échecs={r['failed']} · "
-                    f"non envoyés (plafond)={r['skipped_cap']}"
+                    f"non envoyés (plafond)={r['skipped_cap']} · "
+                    f"refusés (placeholder .env manquant)={r['skipped_placeholder']}"
                 )
         elif args.cmd == "ingest":
             r = ingest_event(conn, args.email, args.type, args.payload)
