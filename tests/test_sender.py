@@ -136,3 +136,14 @@ def test_envoi_reel_refuse_placeholders_non_resolus(tmp_path: Path):
     assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM messages WHERE status='sent'").fetchone()[0] == 0
     conn.close()
+
+
+def test_cli_confirm_sans_transport_erreur(tmp_path: Path, capsys):
+    """U1 : --confirm sans transport doit échouer explicitement, pas simuler en silence."""
+    conn = _seed(tmp_path, 1)
+    conn.close()
+    import pytest
+    with pytest.raises(SystemExit) as exc:
+        sender.main(["--db", str(tmp_path / "s.sqlite"), "send", "--confirm"])
+    assert exc.value.code == 2
+    assert "transport" in capsys.readouterr().err

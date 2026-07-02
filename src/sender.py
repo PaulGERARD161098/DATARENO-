@@ -195,6 +195,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     on_date = date.fromisoformat(args.date) if args.date else date.today()
+    if args.cmd == "send" and args.confirm and not args.export_dir:
+        # Sans transport, --confirm retomberait silencieusement en dry-run :
+        # l'opérateur croirait avoir envoyé. On refuse explicitement.
+        parser.error("--confirm exige un transport : ajoutez --export-dir (export .eml).")
     conn = _db.connect(args.db)
     try:
         if args.cmd == "send":
