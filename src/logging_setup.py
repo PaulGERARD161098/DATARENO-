@@ -23,6 +23,18 @@ def redact(value: str | None, keep: int = 0) -> str:
     return text[:keep] + "***"
 
 
+def _redact_deep(value: object) -> object:
+    """Masque les clés PII à toute profondeur (dicts imbriqués, listes)."""
+    if isinstance(value, dict):
+        return {
+            k: (redact(str(v)) if k.lower() in PII_KEYS and v is not None else _redact_deep(v))
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_deep(v) for v in value]
+    return value
+
+
 class _JsonFormatter(logging.Formatter):
     """Formatte chaque enregistrement en une ligne JSON, en masquant la PII."""
 
@@ -34,9 +46,7 @@ class _JsonFormatter(logging.Formatter):
         }
         extra = getattr(record, "context", None)
         if isinstance(extra, dict):
-            payload["context"] = {
-                k: (redact(v) if k.lower() in PII_KEYS else v) for k, v in extra.items()
-            }
+            payload["context"] = _redact_deep(extra)
         return json.dumps(payload, ensure_ascii=False)
 
 

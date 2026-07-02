@@ -31,3 +31,18 @@ def test_logger_idempotent():
     logger = get_logger("datareno.unique")
     assert len(logger.handlers) == n
     assert logger.level == logging.INFO
+
+
+def test_logger_masque_pii_imbriquee(capsys):
+    """S5 : la PII est masquée à toute profondeur du context (dicts/listes)."""
+    logger = get_logger("datareno.test_pii_deep")
+    logger.info("batch", extra={"context": {
+        "lot": {"email": "jean@exemple.fr", "n": 2},
+        "items": [{"tel": "0601020304"}],
+    }})
+    line = capsys.readouterr().err.strip().splitlines()[-1]
+    payload = json.loads(line)
+    assert payload["context"]["lot"]["email"] == "***"
+    assert payload["context"]["lot"]["n"] == 2
+    assert payload["context"]["items"][0]["tel"] == "***"
+    assert "exemple.fr" not in line
